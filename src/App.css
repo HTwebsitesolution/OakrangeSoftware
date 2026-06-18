@@ -394,3 +394,118 @@ body,
   font-weight: 700;
   opacity: 0.86;
 }
+.completion-panel {
+  margin: 16px 0;
+  padding: 16px;
+  border-radius: 14px;
+  background: white;
+  border: 1px solid #c8d3df;
+  display: grid;
+  gap: 6px;
+}
+
+.completion-good {
+  color: #166534;
+  font-weight: 700;
+}
+
+.completion-warning {
+  color: #9a3412;
+  font-weight: 700;
+}
+
+.chip-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.chip-button-complete {
+  background: #166534;
+}
+
+.chip-button-complete:hover {
+  background: #166534;
+}
+
+.readings-table {
+  display: grid;
+  gap: 8px;
+}
+
+.readings-header,
+.readings-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr 0.8fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.readings-header {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #12355b;
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.readings-row {
+  padding: 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #dbe3ec;
+  font-size: 14px;
+}
+
+.badge {
+  justify-self: start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.badge-pass {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-adjusted {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.review-blocked-message {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-weight: 700;
+}
+
+@media (max-width: 860px) {
+  .readings-header {
+    display: none;
+  }
+
+  .readings-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .readings-row span {
+    display: block;
+  }
+}

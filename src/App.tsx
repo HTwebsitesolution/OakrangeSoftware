@@ -98,6 +98,23 @@ function formatSignedNumber(value: number) {
   return value > 0 ? `+${fixedValue}` : fixedValue;
 }
 
+function normaliseText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function getReadingForPoint(readings: CalibrationReading[], pointLabel: string) {
+  return readings.find(
+    (reading) => normaliseText(reading.test_point) === normaliseText(pointLabel)
+  );
+}
+
+function getResultClass(result: string) {
+  if (result === "Pass") return "badge badge-pass";
+  if (result === "Fail") return "badge badge-fail";
+  if (result === "Adjusted") return "badge badge-adjusted";
+  return "badge";
+}
+
 function App() {
   const [db, setDb] = useState<DbConnection | null>(null);
   const [jobs, setJobs] = useState<CalibrationJob[]>([]);
@@ -122,6 +139,21 @@ function App() {
   const selectedJobTemplate = selectedJob
     ? getTemplate(selectedJob.tool_type)
     : undefined;
+
+  const requiredPoints = selectedJobTemplate?.testPoints ?? [];
+  const completedRequiredPoints = requiredPoints.filter((point) =>
+    getReadingForPoint(readings, point.label)
+  );
+  const missingRequiredPoints = requiredPoints.filter(
+    (point) => !getReadingForPoint(readings, point.label)
+  );
+
+  const hasRequiredPoints = requiredPoints.length > 0;
+  const allRequiredPointsCompleted = hasRequiredPoints
+    ? completedRequiredPoints.length === requiredPoints.length
+    : readings.length > 0;
+
+  const canMarkReadyForReview = allRequiredPointsCompleted && readings.length > 0;
 
   async function loadJobs(database: DbConnection) {
     const savedJobs = await database.select<CalibrationJob[]>(
@@ -314,6 +346,17 @@ function App() {
       return;
     }
 
+    const duplicateReading = readings.some(
+      (reading) => normaliseText(reading.test_point) === normaliseText(testPoint)
+    );
+
+    if (duplicateReading) {
+      setError(
+        `A reading already exists for ${testPoint}. Duplicate readings are not allowed in this prototype.`
+      );
+      return;
+    }
+
     try {
       await db.execute(
         `
@@ -351,6 +394,20 @@ function App() {
 
   async function markReadyForReview() {
     if (!db || !selectedJob) return;
+
+    if (!canMarkReadyForReview) {
+      if (missingRequiredPoints.length > 0) {
+        setError(
+          `This job is not complete. Missing required points: ${missingRequiredPoints
+            .map((point) => point.label)
+            .join(", ")}.`
+        );
+      } else {
+        setError("This job needs at least one reading before review.");
+      }
+
+      return;
+    }
 
     try {
       await db.execute(
@@ -428,28 +485,64 @@ function App() {
 
               {selectedJobTemplate.testPoints.length > 0 ? (
                 <>
+                  <div className="completion-panel">
+                    <strong>
+                      Required points completed: {completedRequiredPoints.length} /{" "}
+                      {requiredPoints.length}
+                    </strong>
+
+                    {allRequiredPointsCompleted ? (
+                      <span className="completion-good">
+                        All required points are complete.
+                      </span>
+                    ) : (
+                      <span className="completion-warning">
+                        Missing:{" "}
+                        {missingRequiredPoints
+                          .map((point) => point.label)
+                          .join(", ")}
+                      </span>
+                    )}
+                  </div>
+
                   <p className="helper-text">
-                    Suggested test points with prototype tolerances. Click one to
-                    use it in the reading form.
+                    Suggested test points with prototype tolerances. Completed
+                    points are locked to prevent duplicate readings.
                   </p>
 
                   <div className="suggested-point-buttons">
-                    {selectedJobTemplate.testPoints.map((point) => (
-                      <button
-                        key={point.label}
-                        type="button"
-                        className="chip-button"
-                        onClick={() => applyTestPoint(point)}
-                      >
-                        <span>{point.label}</span>
-                        <small>±{point.tolerance.toFixed(2)} {point.unit}</small>
-                      </button>
-                    ))}
+                    {selectedJobTemplate.testPoints.map((point) => {
+                      const existingReading = getReadingForPoint(
+                        readings,
+                        point.label
+                      );
+
+                      return (
+                        <button
+                          key={point.label}
+                          type="button"
+                          className={
+                            existingReading
+                              ? "chip-button chip-button-complete"
+                              : "chip-button"
+                          }
+                          onClick={() => applyTestPoint(point)}
+                          disabled={Boolean(existingReading)}
+                        >
+                          <span>{point.label}</span>
+                          <small>
+                            Nominal {point.nominalValue} {point.unit} | ±
+                            {point.tolerance.toFixed(2)} {point.unit}
+                          </small>
+                          {existingReading && <small>Completed</small>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </>
               ) : (
                 <p className="helper-text">
-                  No suggested test points have been added for this tool type yet.
+                  No required test points have been added for this tool type yet.
                 </p>
               )}
             </section>
@@ -516,31 +609,61 @@ function App() {
             {readings.length === 0 ? (
               <p className="empty-state">No readings added yet.</p>
             ) : (
-              <div className="job-table">
-                {readings.map((reading) => (
-                  <article key={reading.id} className="job-row">
-                    <div>
-                      <strong>{reading.test_point}</strong>
-                      <span>Test Point</span>
-                    </div>
+              <div className="readings-table">
+                <div className="readings-header">
+                  <span>Test Point</span>
+                  <span>Nominal</span>
+                  <span>Tolerance</span>
+                  <span>Actual</span>
+                  <span>Error</span>
+                  <span>Result</span>
+                </div>
 
-                    <div>
-                      <strong>{reading.actual_reading}</strong>
-                      <span>Actual Reading</span>
-                    </div>
+                {readings.map((reading) => {
+                  const templatePoint = selectedJobTemplate?.testPoints.find(
+                    (point) =>
+                      normaliseText(point.label) ===
+                      normaliseText(reading.test_point)
+                  );
 
-                    <div>
-                      <strong>{reading.error_value}</strong>
-                      <span>{reading.result}</span>
-                    </div>
-                  </article>
-                ))}
+                  return (
+                    <article key={reading.id} className="readings-row">
+                      <span>{reading.test_point}</span>
+                      <span>
+                        {templatePoint
+                          ? `${templatePoint.nominalValue} ${templatePoint.unit}`
+                          : "Manual"}
+                      </span>
+                      <span>
+                        {templatePoint
+                          ? `±${templatePoint.tolerance.toFixed(2)} ${
+                              templatePoint.unit
+                            }`
+                          : "Manual"}
+                      </span>
+                      <span>{reading.actual_reading}</span>
+                      <span>{reading.error_value}</span>
+                      <span className={getResultClass(reading.result)}>
+                        {reading.result}
+                      </span>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
 
           <div className="action-row">
-            <button type="button" onClick={markReadyForReview}>
+            <button
+              type="button"
+              onClick={markReadyForReview}
+              disabled={!canMarkReadyForReview}
+              title={
+                canMarkReadyForReview
+                  ? "Ready to submit for office/admin review"
+                  : "Complete all required test points before review"
+              }
+            >
               Mark Ready for Review
             </button>
 
@@ -548,6 +671,13 @@ function App() {
               Back to Dashboard
             </button>
           </div>
+
+          {!canMarkReadyForReview && (
+            <p className="review-blocked-message">
+              Complete all required test points before marking this job Ready for
+              Review.
+            </p>
+          )}
         </section>
       </main>
     );
