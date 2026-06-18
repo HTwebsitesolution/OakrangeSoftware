@@ -23,9 +23,44 @@ type CalibrationReading = {
   created_at: string;
 };
 
+type CalibrationTemplate = {
+  toolType: string;
+  unit: string;
+  testPoints: string[];
+};
+
 type DbConnection = Awaited<ReturnType<typeof Database.load>>;
 
 const DB_PATH = "sqlite:oakrange_calibration.db";
+
+const CALIBRATION_TEMPLATES: CalibrationTemplate[] = [
+  {
+    toolType: "Torque Wrench",
+    unit: "Nm",
+    testPoints: ["20 Nm", "60 Nm", "100 Nm"],
+  },
+  {
+    toolType: "Pressure Gauge",
+    unit: "bar / psi",
+    testPoints: [],
+  },
+  {
+    toolType: "Tyre Inflator",
+    unit: "psi / bar",
+    testPoints: [],
+  },
+  {
+    toolType: "Wheel Balancer",
+    unit: "g",
+    testPoints: [],
+  },
+];
+
+function getTemplate(toolType: string) {
+  return CALIBRATION_TEMPLATES.find(
+    (template) => template.toolType === toolType
+  );
+}
 
 function App() {
   const [db, setDb] = useState<DbConnection | null>(null);
@@ -46,6 +81,11 @@ function App() {
   const [actualReading, setActualReading] = useState("");
   const [errorValue, setErrorValue] = useState("");
   const [result, setResult] = useState("Pass");
+
+  const selectedTemplate = getTemplate(toolType);
+  const selectedJobTemplate = selectedJob
+    ? getTemplate(selectedJob.tool_type)
+    : undefined;
 
   async function loadJobs(database: DbConnection) {
     const savedJobs = await database.select<CalibrationJob[]>(
@@ -242,6 +282,11 @@ function App() {
           <p className="eyebrow">Oakrange Engineering</p>
 
           <h1>Job Detail</h1>
+<div className="top-action-row">
+  <button type="button" onClick={() => setSelectedJob(null)}>
+    Back to Dashboard
+  </button>
+</div>
 
           <div className="detail-grid">
             <div>
@@ -274,6 +319,42 @@ function App() {
               <strong>{selectedJob.status}</strong>
             </div>
           </div>
+
+          {selectedJobTemplate && (
+            <section className="template-panel">
+              <h2>Calibration Template</h2>
+
+              <p>
+                <strong>{selectedJobTemplate.toolType}</strong> template selected.
+                Unit: <strong>{selectedJobTemplate.unit}</strong>
+              </p>
+
+              {selectedJobTemplate.testPoints.length > 0 ? (
+                <>
+                  <p className="helper-text">
+                    Suggested test points. Click one to use it in the reading form.
+                  </p>
+
+                  <div className="suggested-point-buttons">
+                    {selectedJobTemplate.testPoints.map((point) => (
+                      <button
+                        key={point}
+                        type="button"
+                        className="chip-button"
+                        onClick={() => setTestPoint(point)}
+                      >
+                        {point}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="helper-text">
+                  No suggested test points have been added for this tool type yet.
+                </p>
+              )}
+            </section>
+          )}
 
           {error && <p className="error-message">{error}</p>}
 
@@ -421,12 +502,33 @@ function App() {
 
             <label>
               Tool Type
-              <input
+              <select
                 value={toolType}
                 onChange={(event) => setToolType(event.target.value)}
-                placeholder="e.g. Torque Wrench"
-              />
+              >
+                <option value="">Select a tool type...</option>
+                {CALIBRATION_TEMPLATES.map((template) => (
+                  <option key={template.toolType} value={template.toolType}>
+                    {template.toolType}
+                  </option>
+                ))}
+              </select>
             </label>
+
+            {selectedTemplate && (
+              <div className="template-preview">
+                <strong>{selectedTemplate.toolType}</strong>
+                <span>Unit: {selectedTemplate.unit}</span>
+
+                {selectedTemplate.testPoints.length > 0 ? (
+                  <span>
+                    Suggested points: {selectedTemplate.testPoints.join(", ")}
+                  </span>
+                ) : (
+                  <span>No suggested test points added yet.</span>
+                )}
+              </div>
+            )}
 
             <label>
               Engineer Name
