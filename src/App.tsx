@@ -23,10 +23,17 @@ type CalibrationReading = {
   created_at: string;
 };
 
+type CalibrationTestPoint = {
+  label: string;
+  nominalValue: number;
+  unit: string;
+  tolerance: number;
+};
+
 type CalibrationTemplate = {
   toolType: string;
   unit: string;
-  testPoints: string[];
+  testPoints: CalibrationTestPoint[];
 };
 
 type DbConnection = Awaited<ReturnType<typeof Database.load>>;
@@ -37,7 +44,26 @@ const CALIBRATION_TEMPLATES: CalibrationTemplate[] = [
   {
     toolType: "Torque Wrench",
     unit: "Nm",
-    testPoints: ["20 Nm", "60 Nm", "100 Nm"],
+    testPoints: [
+      {
+        label: "20 Nm",
+        nominalValue: 20,
+        unit: "Nm",
+        tolerance: 1,
+      },
+      {
+        label: "60 Nm",
+        nominalValue: 60,
+        unit: "Nm",
+        tolerance: 2,
+      },
+      {
+        label: "100 Nm",
+        nominalValue: 100,
+        unit: "Nm",
+        tolerance: 3,
+      },
+    ],
   },
   {
     toolType: "Pressure Gauge",
@@ -60,6 +86,16 @@ function getTemplate(toolType: string) {
   return CALIBRATION_TEMPLATES.find(
     (template) => template.toolType === toolType
   );
+}
+
+function getNumberFromText(value: string) {
+  const match = value.match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+function formatSignedNumber(value: number) {
+  const fixedValue = value.toFixed(2);
+  return value > 0 ? `+${fixedValue}` : fixedValue;
 }
 
 function App() {
@@ -145,6 +181,61 @@ function App() {
     setupDatabase();
   }, []);
 
+  function calculateErrorAndResult(pointLabel: string, actualText: string) {
+    const matchingPoint = selectedJobTemplate?.testPoints.find(
+      (point) => point.label === pointLabel
+    );
+
+    const actualValue = getNumberFromText(actualText);
+
+    if (!matchingPoint || actualValue === null) {
+      return null;
+    }
+
+    const calculatedError = actualValue - matchingPoint.nominalValue;
+    const roundedError = Number(calculatedError.toFixed(2));
+    const calculatedResult =
+      Math.abs(roundedError) <= matchingPoint.tolerance ? "Pass" : "Fail";
+
+    return {
+      errorText: `${formatSignedNumber(roundedError)} ${matchingPoint.unit}`,
+      resultText: calculatedResult,
+    };
+  }
+
+  function applyTestPoint(point: CalibrationTestPoint) {
+    setTestPoint(point.label);
+
+    const calculation = calculateErrorAndResult(point.label, actualReading);
+
+    if (calculation) {
+      setErrorValue(calculation.errorText);
+      setResult(calculation.resultText);
+    }
+  }
+
+  function handleTestPointChange(value: string) {
+    setTestPoint(value);
+
+    const calculation = calculateErrorAndResult(value, actualReading);
+
+    if (calculation) {
+      setErrorValue(calculation.errorText);
+      setResult(calculation.resultText);
+    }
+  }
+
+  function handleActualReadingChange(value: string) {
+    setActualReading(value);
+
+    const calculation = calculateErrorAndResult(testPoint, value);
+
+    if (calculation) {
+      setErrorValue(calculation.errorText);
+      setResult(calculation.resultText);
+    }
+  }
+
   async function saveJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -202,6 +293,11 @@ function App() {
 
     setSelectedJob(job);
     setError("");
+    setTestPoint("");
+    setActualReading("");
+    setErrorValue("");
+    setResult("Pass");
+
     await loadReadings(db, job.id);
   }
 
@@ -282,11 +378,12 @@ function App() {
           <p className="eyebrow">Oakrange Engineering</p>
 
           <h1>Job Detail</h1>
-<div className="top-action-row">
-  <button type="button" onClick={() => setSelectedJob(null)}>
-    Back to Dashboard
-  </button>
-</div>
+
+          <div className="top-action-row">
+            <button type="button" onClick={() => setSelectedJob(null)}>
+              Back to Dashboard
+            </button>
+          </div>
 
           <div className="detail-grid">
             <div>
@@ -332,18 +429,20 @@ function App() {
               {selectedJobTemplate.testPoints.length > 0 ? (
                 <>
                   <p className="helper-text">
-                    Suggested test points. Click one to use it in the reading form.
+                    Suggested test points with prototype tolerances. Click one to
+                    use it in the reading form.
                   </p>
 
                   <div className="suggested-point-buttons">
                     {selectedJobTemplate.testPoints.map((point) => (
                       <button
-                        key={point}
+                        key={point.label}
                         type="button"
                         className="chip-button"
-                        onClick={() => setTestPoint(point)}
+                        onClick={() => applyTestPoint(point)}
                       >
-                        {point}
+                        <span>{point.label}</span>
+                        <small>±{point.tolerance.toFixed(2)} {point.unit}</small>
                       </button>
                     ))}
                   </div>
@@ -365,7 +464,7 @@ function App() {
               Test Point
               <input
                 value={testPoint}
-                onChange={(event) => setTestPoint(event.target.value)}
+                onChange={(event) => handleTestPointChange(event.target.value)}
                 placeholder="e.g. 20 Nm"
               />
             </label>
@@ -374,7 +473,9 @@ function App() {
               Actual Reading
               <input
                 value={actualReading}
-                onChange={(event) => setActualReading(event.target.value)}
+                onChange={(event) =>
+                  handleActualReadingChange(event.target.value)
+                }
                 placeholder="e.g. 20.1 Nm"
               />
             </label>
@@ -384,7 +485,7 @@ function App() {
               <input
                 value={errorValue}
                 onChange={(event) => setErrorValue(event.target.value)}
-                placeholder="e.g. +0.1"
+                placeholder="Auto-calculated where possible"
               />
             </label>
 
@@ -399,6 +500,12 @@ function App() {
                 <option value="Adjusted">Adjusted</option>
               </select>
             </label>
+
+            <p className="calculation-note">
+              For Torque Wrench prototype rules, the app calculates Error as:
+              Actual Reading minus Nominal Test Point. It then sets Pass or Fail
+              using the prototype tolerance.
+            </p>
 
             <button type="submit">Save Reading Offline</button>
           </form>
@@ -522,7 +629,15 @@ function App() {
 
                 {selectedTemplate.testPoints.length > 0 ? (
                   <span>
-                    Suggested points: {selectedTemplate.testPoints.join(", ")}
+                    Prototype points:{" "}
+                    {selectedTemplate.testPoints
+                      .map(
+                        (point) =>
+                          `${point.label} (±${point.tolerance.toFixed(2)} ${
+                            point.unit
+                          })`
+                      )
+                      .join(", ")}
                   </span>
                 ) : (
                   <span>No suggested test points added yet.</span>
