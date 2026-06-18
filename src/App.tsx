@@ -1,0 +1,482 @@
+import { useEffect, useState, type FormEvent } from "react";
+import Database from "@tauri-apps/plugin-sql";
+import "./App.css";
+
+type CalibrationJob = {
+  id: number;
+  customer_name: string;
+  site_name: string;
+  tool_id: string;
+  tool_type: string;
+  engineer_name: string;
+  status: string;
+  created_at: string;
+};
+
+type CalibrationReading = {
+  id: number;
+  job_id: number;
+  test_point: string;
+  actual_reading: string;
+  error_value: string;
+  result: string;
+  created_at: string;
+};
+
+type DbConnection = Awaited<ReturnType<typeof Database.load>>;
+
+const DB_PATH = "sqlite:oakrange_calibration.db";
+
+function App() {
+  const [db, setDb] = useState<DbConnection | null>(null);
+  const [jobs, setJobs] = useState<CalibrationJob[]>([]);
+  const [readings, setReadings] = useState<CalibrationReading[]>([]);
+  const [selectedJob, setSelectedJob] = useState<CalibrationJob | null>(null);
+
+  const [error, setError] = useState<string>("");
+  const [showForm, setShowForm] = useState(false);
+
+  const [customerName, setCustomerName] = useState("");
+  const [siteName, setSiteName] = useState("");
+  const [toolId, setToolId] = useState("");
+  const [toolType, setToolType] = useState("");
+  const [engineerName, setEngineerName] = useState("");
+
+  const [testPoint, setTestPoint] = useState("");
+  const [actualReading, setActualReading] = useState("");
+  const [errorValue, setErrorValue] = useState("");
+  const [result, setResult] = useState("Pass");
+
+  async function loadJobs(database: DbConnection) {
+    const savedJobs = await database.select<CalibrationJob[]>(
+      "SELECT * FROM calibration_jobs ORDER BY id DESC"
+    );
+
+    setJobs(savedJobs);
+  }
+
+  async function loadReadings(database: DbConnection, jobId: number) {
+    const savedReadings = await database.select<CalibrationReading[]>(
+      "SELECT * FROM calibration_readings WHERE job_id = $1 ORDER BY id DESC",
+      [jobId]
+    );
+
+    setReadings(savedReadings);
+  }
+
+  useEffect(() => {
+    async function setupDatabase() {
+      try {
+        const database = await Database.load(DB_PATH);
+
+        await database.execute(`
+          CREATE TABLE IF NOT EXISTS calibration_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            site_name TEXT NOT NULL,
+            tool_id TEXT NOT NULL,
+            tool_type TEXT NOT NULL,
+            engineer_name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        `);
+
+        await database.execute(`
+          CREATE TABLE IF NOT EXISTS calibration_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            test_point TEXT NOT NULL,
+            actual_reading TEXT NOT NULL,
+            error_value TEXT NOT NULL,
+            result TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES calibration_jobs(id)
+          )
+        `);
+
+        setDb(database);
+        await loadJobs(database);
+      } catch (err) {
+        setError(String(err));
+      }
+    }
+
+    setupDatabase();
+  }, []);
+
+  async function saveJob(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!db) {
+      setError("Database is not ready yet.");
+      return;
+    }
+
+    if (!customerName || !siteName || !toolId || !toolType || !engineerName) {
+      setError("Please complete all fields before saving.");
+      return;
+    }
+
+    try {
+      await db.execute(
+        `
+        INSERT INTO calibration_jobs (
+          customer_name,
+          site_name,
+          tool_id,
+          tool_type,
+          engineer_name,
+          status,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `,
+        [
+          customerName,
+          siteName,
+          toolId,
+          toolType,
+          engineerName,
+          "Saved Offline",
+          new Date().toISOString(),
+        ]
+      );
+
+      setCustomerName("");
+      setSiteName("");
+      setToolId("");
+      setToolType("");
+      setEngineerName("");
+      setError("");
+      setShowForm(false);
+
+      await loadJobs(db);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function openJob(job: CalibrationJob) {
+    if (!db) return;
+
+    setSelectedJob(job);
+    setError("");
+    await loadReadings(db, job.id);
+  }
+
+  async function saveReading(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!db || !selectedJob) {
+      setError("No job selected.");
+      return;
+    }
+
+    if (!testPoint || !actualReading || !errorValue || !result) {
+      setError("Please complete all reading fields.");
+      return;
+    }
+
+    try {
+      await db.execute(
+        `
+        INSERT INTO calibration_readings (
+          job_id,
+          test_point,
+          actual_reading,
+          error_value,
+          result,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [
+          selectedJob.id,
+          testPoint,
+          actualReading,
+          errorValue,
+          result,
+          new Date().toISOString(),
+        ]
+      );
+
+      setTestPoint("");
+      setActualReading("");
+      setErrorValue("");
+      setResult("Pass");
+      setError("");
+
+      await loadReadings(db, selectedJob.id);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function markReadyForReview() {
+    if (!db || !selectedJob) return;
+
+    try {
+      await db.execute(
+        "UPDATE calibration_jobs SET status = $1 WHERE id = $2",
+        ["Ready for Review", selectedJob.id]
+      );
+
+      const updatedJob = {
+        ...selectedJob,
+        status: "Ready for Review",
+      };
+
+      setSelectedJob(updatedJob);
+      await loadJobs(db);
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  if (selectedJob) {
+    return (
+      <main className="app-shell">
+        <section className="dashboard-card">
+          <p className="eyebrow">Oakrange Engineering</p>
+
+          <h1>Job Detail</h1>
+
+          <div className="detail-grid">
+            <div>
+              <span>Customer</span>
+              <strong>{selectedJob.customer_name}</strong>
+            </div>
+
+            <div>
+              <span>Site</span>
+              <strong>{selectedJob.site_name}</strong>
+            </div>
+
+            <div>
+              <span>Tool ID</span>
+              <strong>{selectedJob.tool_id}</strong>
+            </div>
+
+            <div>
+              <span>Tool Type</span>
+              <strong>{selectedJob.tool_type}</strong>
+            </div>
+
+            <div>
+              <span>Engineer</span>
+              <strong>{selectedJob.engineer_name}</strong>
+            </div>
+
+            <div>
+              <span>Status</span>
+              <strong>{selectedJob.status}</strong>
+            </div>
+          </div>
+
+          {error && <p className="error-message">{error}</p>}
+
+          <form className="job-form" onSubmit={saveReading}>
+            <h2>Add Calibration Reading</h2>
+
+            <label>
+              Test Point
+              <input
+                value={testPoint}
+                onChange={(event) => setTestPoint(event.target.value)}
+                placeholder="e.g. 20 Nm"
+              />
+            </label>
+
+            <label>
+              Actual Reading
+              <input
+                value={actualReading}
+                onChange={(event) => setActualReading(event.target.value)}
+                placeholder="e.g. 20.1 Nm"
+              />
+            </label>
+
+            <label>
+              Error
+              <input
+                value={errorValue}
+                onChange={(event) => setErrorValue(event.target.value)}
+                placeholder="e.g. +0.1"
+              />
+            </label>
+
+            <label>
+              Result
+              <select
+                value={result}
+                onChange={(event) => setResult(event.target.value)}
+              >
+                <option value="Pass">Pass</option>
+                <option value="Fail">Fail</option>
+                <option value="Adjusted">Adjusted</option>
+              </select>
+            </label>
+
+            <button type="submit">Save Reading Offline</button>
+          </form>
+
+          <section className="jobs-list">
+            <h2>Calibration Readings</h2>
+
+            {readings.length === 0 ? (
+              <p className="empty-state">No readings added yet.</p>
+            ) : (
+              <div className="job-table">
+                {readings.map((reading) => (
+                  <article key={reading.id} className="job-row">
+                    <div>
+                      <strong>{reading.test_point}</strong>
+                      <span>Test Point</span>
+                    </div>
+
+                    <div>
+                      <strong>{reading.actual_reading}</strong>
+                      <span>Actual Reading</span>
+                    </div>
+
+                    <div>
+                      <strong>{reading.error_value}</strong>
+                      <span>{reading.result}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <div className="action-row">
+            <button type="button" onClick={markReadyForReview}>
+              Mark Ready for Review
+            </button>
+
+            <button type="button" onClick={() => setSelectedJob(null)}>
+              Back to Dashboard
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="dashboard-card">
+        <p className="eyebrow">Oakrange Engineering</p>
+
+        <h1>Oakrange Calibration Software</h1>
+
+        <p className="subtitle">Engineer Desktop App</p>
+
+        <div className="button-grid">
+          <button type="button" onClick={() => setShowForm(!showForm)}>
+            New Calibration Job
+          </button>
+
+          <button type="button">Saved Offline Jobs: {jobs.length}</button>
+
+          <button type="button">Reference Instruments</button>
+
+          <button type="button">Sync Status: Offline</button>
+        </div>
+
+        {error && <p className="error-message">{error}</p>}
+
+        {showForm && (
+          <form className="job-form" onSubmit={saveJob}>
+            <h2>New Calibration Job</h2>
+
+            <label>
+              Customer Name
+              <input
+                value={customerName}
+                onChange={(event) => setCustomerName(event.target.value)}
+                placeholder="e.g. Oakrange Customer"
+              />
+            </label>
+
+            <label>
+              Site Name
+              <input
+                value={siteName}
+                onChange={(event) => setSiteName(event.target.value)}
+                placeholder="e.g. Main Workshop"
+              />
+            </label>
+
+            <label>
+              Tool ID
+              <input
+                value={toolId}
+                onChange={(event) => setToolId(event.target.value)}
+                placeholder="e.g. TW-001"
+              />
+            </label>
+
+            <label>
+              Tool Type
+              <input
+                value={toolType}
+                onChange={(event) => setToolType(event.target.value)}
+                placeholder="e.g. Torque Wrench"
+              />
+            </label>
+
+            <label>
+              Engineer Name
+              <input
+                value={engineerName}
+                onChange={(event) => setEngineerName(event.target.value)}
+                placeholder="e.g. Luke"
+              />
+            </label>
+
+            <button type="submit">Save Offline</button>
+          </form>
+        )}
+
+        <section className="jobs-list">
+          <h2>Saved Offline Jobs</h2>
+
+          {jobs.length === 0 ? (
+            <p className="empty-state">No jobs saved yet.</p>
+          ) : (
+            <div className="job-table">
+              {jobs.map((job) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  className="job-row job-row-button"
+                  onClick={() => openJob(job)}
+                >
+                  <div>
+                    <strong>{job.customer_name}</strong>
+                    <span>{job.site_name}</span>
+                  </div>
+
+                  <div>
+                    <strong>{job.tool_id}</strong>
+                    <span>{job.tool_type}</span>
+                  </div>
+
+                  <div>
+                    <strong>{job.engineer_name}</strong>
+                    <span>{job.status}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </section>
+    </main>
+  );
+}
+
+export default App;
