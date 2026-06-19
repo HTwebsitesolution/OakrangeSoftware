@@ -42,15 +42,17 @@ type CalibrationTemplate = {
   testPoints: CalibrationTestPoint[];
 };
 
+type ReferenceInstrument = {
+  id: number;
+  name: string;
+  certificate_number: string;
+  calibration_due_date: string;
+  created_at: string;
+};
+
 type DbConnection = Awaited<ReturnType<typeof Database.load>>;
 
 const DB_PATH = "sqlite:oakrange_calibration.db";
-const REFERENCE_INSTRUMENTS = [
-  "Torque Reference Instrument - REF-TW-001",
-  "Pressure Reference Instrument - REF-PG-001",
-  "Tyre Inflator Reference Instrument - REF-TI-001",
-  "Wheel Balancer Reference Instrument - REF-WB-001",
-];
 
 const CALIBRATION_TEMPLATES: CalibrationTemplate[] = [
   {
@@ -129,6 +131,51 @@ function getResultClass(result: string) {
 function displayValue(value: string | null | undefined) {
   return value && value.trim().length > 0 ? value : "Not recorded";
 }
+
+function formatInstrumentLabel(instrument: ReferenceInstrument) {
+  return `${instrument.name} - ${instrument.certificate_number}`;
+}
+
+function parseDateOnly(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+}
+
+function isInstrumentExpired(dueDate: string) {
+  const due = parseDateOnly(dueDate);
+
+  if (!due) {
+    return false;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return due < today;
+}
+
+function getInstrumentValidity(dueDate: string) {
+  return isInstrumentExpired(dueDate) ? "Expired" : "Valid";
+}
+
+function formatDisplayDate(value: string) {
+  const parsed = parseDateOnly(value);
+
+  if (!parsed) {
+    return value;
+  }
+
+  return parsed.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 async function addMissingColumn(
   database: DbConnection,
   columnName: string,
@@ -155,6 +202,11 @@ function App() {
 
   const [error, setError] = useState<string>("");
   const [showForm, setShowForm] = useState(false);
+  const [showReferenceInstruments, setShowReferenceInstruments] =
+    useState(false);
+  const [referenceInstruments, setReferenceInstruments] = useState<
+    ReferenceInstrument[]
+  >([]);
 
   const [customerName, setCustomerName] = useState("");
   const [siteName, setSiteName] = useState("");
@@ -167,6 +219,10 @@ const [humidity, setHumidity] = useState("");
 const [referenceInstrument, setReferenceInstrument] = useState("");
 const [adjustmentMade, setAdjustmentMade] = useState("");
 const [engineerNotes, setEngineerNotes] = useState("");
+
+  const [instrumentName, setInstrumentName] = useState("");
+  const [certificateNumber, setCertificateNumber] = useState("");
+  const [calibrationDueDate, setCalibrationDueDate] = useState("");
 
   const [testPoint, setTestPoint] = useState("");
   const [actualReading, setActualReading] = useState("");
@@ -196,6 +252,14 @@ const [engineerNotes, setEngineerNotes] = useState("");
 
   const canMarkReadyForReview = allRequiredPointsCompleted && readings.length > 0;
 
+  const selectedReferenceInstrument = referenceInstruments.find(
+    (instrument) =>
+      formatInstrumentLabel(instrument) === referenceInstrument
+  );
+  const selectedInstrumentExpired = selectedReferenceInstrument
+    ? isInstrumentExpired(selectedReferenceInstrument.calibration_due_date)
+    : false;
+
   async function loadJobs(database: DbConnection) {
     const savedJobs = await database.select<CalibrationJob[]>(
       "SELECT * FROM calibration_jobs ORDER BY id DESC"
@@ -211,6 +275,14 @@ const [engineerNotes, setEngineerNotes] = useState("");
     );
 
     setReadings(savedReadings);
+  }
+
+  async function loadReferenceInstruments(database: DbConnection) {
+    const savedInstruments = await database.select<ReferenceInstrument[]>(
+      "SELECT * FROM reference_instruments ORDER BY name ASC, id ASC"
+    );
+
+    setReferenceInstruments(savedInstruments);
   }
 
   useEffect(() => {
@@ -272,6 +344,16 @@ await addMissingColumn(
         `);
 
         await database.execute(`
+          CREATE TABLE IF NOT EXISTS reference_instruments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            certificate_number TEXT NOT NULL,
+            calibration_due_date TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        `);
+
+        await database.execute(`
           UPDATE calibration_jobs
           SET status = 'Draft'
           WHERE status = 'Saved Offline'
@@ -279,6 +361,7 @@ await addMissingColumn(
 
         setDb(database);
         await loadJobs(database);
+        await loadReferenceInstruments(database);
       } catch (err) {
         setError(String(err));
       }
@@ -622,6 +705,51 @@ setEngineerNotes("");
     }
   }
 
+  async function saveReferenceInstrument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!db) {
+      setError("Database is not ready yet.");
+      return;
+    }
+
+    if (!instrumentName || !certificateNumber || !calibrationDueDate) {
+      setError(
+        "Please complete instrument name, certificate number, and calibration due date."
+      );
+      return;
+    }
+
+    try {
+      await db.execute(
+        `
+        INSERT INTO reference_instruments (
+          name,
+          certificate_number,
+          calibration_due_date,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4)
+        `,
+        [
+          instrumentName,
+          certificateNumber,
+          calibrationDueDate,
+          new Date().toISOString(),
+        ]
+      );
+
+      setInstrumentName("");
+      setCertificateNumber("");
+      setCalibrationDueDate("");
+      setError("");
+
+      await loadReferenceInstruments(db);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   async function returnToDraft() {
     if (!db || !selectedJob) return;
 
@@ -637,6 +765,116 @@ setEngineerNotes("");
     } catch (err) {
       setError(String(err));
     }
+  }
+
+  if (showReferenceInstruments) {
+    return (
+      <main className="app-shell">
+        <section className="dashboard-card">
+          <p className="eyebrow">Oakrange Engineering</p>
+
+          <h1>Reference Instruments</h1>
+
+          <p className="subtitle">
+            Local register of calibration reference instruments
+          </p>
+
+          <div className="top-action-row">
+            <button
+              type="button"
+              onClick={() => {
+                setShowReferenceInstruments(false);
+                setError("");
+              }}
+            >
+              Back to Dashboard
+            </button>
+          </div>
+
+          {error && <p className="error-message">{error}</p>}
+
+          <form className="job-form" onSubmit={saveReferenceInstrument}>
+            <h2>Add Reference Instrument</h2>
+
+            <label>
+              Instrument Name
+              <input
+                value={instrumentName}
+                onChange={(event) => setInstrumentName(event.target.value)}
+                placeholder="e.g. Torque Reference Instrument"
+              />
+            </label>
+
+            <label>
+              Certificate Number
+              <input
+                value={certificateNumber}
+                onChange={(event) => setCertificateNumber(event.target.value)}
+                placeholder="e.g. REF-TW-001"
+              />
+            </label>
+
+            <label>
+              Calibration Due Date
+              <input
+                type="date"
+                value={calibrationDueDate}
+                onChange={(event) =>
+                  setCalibrationDueDate(event.target.value)
+                }
+              />
+            </label>
+
+            <button type="submit">Save Reference Instrument</button>
+          </form>
+
+          <section className="jobs-list">
+            <h2>Saved Reference Instruments</h2>
+
+            {referenceInstruments.length === 0 ? (
+              <p className="empty-state">
+                No reference instruments saved yet. Add one above to use it in
+                calibration jobs.
+              </p>
+            ) : (
+              <div className="instruments-table">
+                <div className="instruments-header">
+                  <span>Name</span>
+                  <span>Certificate</span>
+                  <span>Due Date</span>
+                  <span>Status</span>
+                </div>
+
+                {referenceInstruments.map((instrument) => {
+                  const validity = getInstrumentValidity(
+                    instrument.calibration_due_date
+                  );
+
+                  return (
+                    <article key={instrument.id} className="instruments-row">
+                      <span>{instrument.name}</span>
+                      <span>{instrument.certificate_number}</span>
+                      <span>
+                        {formatDisplayDate(instrument.calibration_due_date)}
+                      </span>
+                      <span
+                        className={
+                          validity === "Valid"
+                            ? "badge badge-valid"
+                            : "badge badge-expired"
+                        }
+                      >
+                        {validity}
+                      </span>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </section>
+      </main>
+    );
   }
 
   if (selectedJob) {
@@ -1004,7 +1242,16 @@ setEngineerNotes("");
 
           <button type="button">Saved Offline Jobs: {jobs.length}</button>
 
-          <button type="button">Reference Instruments</button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowReferenceInstruments(true);
+              setShowForm(false);
+              setError("");
+            }}
+          >
+            Reference Instruments: {referenceInstruments.length}
+          </button>
 
           <button type="button">Sync Status: Offline</button>
         </div>
@@ -1122,13 +1369,25 @@ setEngineerNotes("");
     onChange={(event) => setReferenceInstrument(event.target.value)}
   >
     <option value="">Select reference instrument...</option>
-    {REFERENCE_INSTRUMENTS.map((instrument) => (
-      <option key={instrument} value={instrument}>
-        {instrument}
-      </option>
-    ))}
+    {referenceInstruments.map((instrument) => {
+      const label = formatInstrumentLabel(instrument);
+      const validity = getInstrumentValidity(instrument.calibration_due_date);
+
+      return (
+        <option key={instrument.id} value={label}>
+          {label} ({validity})
+        </option>
+      );
+    })}
   </select>
 </label>
+
+{selectedInstrumentExpired && (
+  <p className="instrument-warning full-width-field">
+    Warning: The selected reference instrument has an expired calibration due
+    date. You can still save this job, but review the instrument before use.
+  </p>
+)}
 
 <label className="full-width-field">
   Adjustment Made
