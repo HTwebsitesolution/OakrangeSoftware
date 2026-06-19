@@ -114,6 +114,23 @@ function getResultClass(result: string) {
   if (result === "Adjusted") return "badge badge-adjusted";
   return "badge";
 }
+async function addMissingColumn(
+  database: DbConnection,
+  columnName: string,
+  columnDefinition: string
+) {
+  const columns = await database.select<Array<{ name: string }>>(
+    "PRAGMA table_info(calibration_jobs)"
+  );
+
+  const columnExists = columns.some((column) => column.name === columnName);
+
+  if (!columnExists) {
+    await database.execute(
+      `ALTER TABLE calibration_jobs ADD COLUMN ${columnDefinition}`
+    );
+  }
+}
 
 function App() {
   const [db, setDb] = useState<DbConnection | null>(null);
@@ -192,6 +209,33 @@ function App() {
             created_at TEXT NOT NULL
           )
         `);
+await addMissingColumn(
+  database,
+  "calibration_date",
+  "calibration_date TEXT"
+);
+
+await addMissingColumn(database, "temperature", "temperature TEXT");
+
+await addMissingColumn(database, "humidity", "humidity TEXT");
+
+await addMissingColumn(
+  database,
+  "reference_instrument",
+  "reference_instrument TEXT"
+);
+
+await addMissingColumn(
+  database,
+  "engineer_notes",
+  "engineer_notes TEXT"
+);
+
+await addMissingColumn(
+  database,
+  "adjustment_made",
+  "adjustment_made TEXT"
+);
 
         await database.execute(`
           CREATE TABLE IF NOT EXISTS calibration_readings (
