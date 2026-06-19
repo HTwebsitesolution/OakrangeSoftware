@@ -11,6 +11,12 @@ type CalibrationJob = {
   engineer_name: string;
   status: string;
   created_at: string;
+  calibration_date?: string | null;
+  temperature?: string | null;
+  humidity?: string | null;
+  reference_instrument?: string | null;
+  engineer_notes?: string | null;
+  adjustment_made?: string | null;
 };
 
 type CalibrationReading = {
@@ -39,6 +45,12 @@ type CalibrationTemplate = {
 type DbConnection = Awaited<ReturnType<typeof Database.load>>;
 
 const DB_PATH = "sqlite:oakrange_calibration.db";
+const REFERENCE_INSTRUMENTS = [
+  "Torque Reference Instrument - REF-TW-001",
+  "Pressure Reference Instrument - REF-PG-001",
+  "Tyre Inflator Reference Instrument - REF-TI-001",
+  "Wheel Balancer Reference Instrument - REF-WB-001",
+];
 
 const CALIBRATION_TEMPLATES: CalibrationTemplate[] = [
   {
@@ -114,6 +126,9 @@ function getResultClass(result: string) {
   if (result === "Adjusted") return "badge badge-adjusted";
   return "badge";
 }
+function displayValue(value: string | null | undefined) {
+  return value && value.trim().length > 0 ? value : "Not recorded";
+}
 async function addMissingColumn(
   database: DbConnection,
   columnName: string,
@@ -146,6 +161,12 @@ function App() {
   const [toolId, setToolId] = useState("");
   const [toolType, setToolType] = useState("");
   const [engineerName, setEngineerName] = useState("");
+const [calibrationDate, setCalibrationDate] = useState("");
+const [temperature, setTemperature] = useState("");
+const [humidity, setHumidity] = useState("");
+const [referenceInstrument, setReferenceInstrument] = useState("");
+const [adjustmentMade, setAdjustmentMade] = useState("");
+const [engineerNotes, setEngineerNotes] = useState("");
 
   const [testPoint, setTestPoint] = useState("");
   const [actualReading, setActualReading] = useState("");
@@ -355,34 +376,55 @@ await addMissingColumn(
       return;
     }
 
-    if (!customerName || !siteName || !toolId || !toolType || !engineerName) {
-      setError("Please complete all fields before saving.");
-      return;
-    }
+    if (
+  !customerName ||
+  !siteName ||
+  !toolId ||
+  !toolType ||
+  !engineerName ||
+  !calibrationDate
+) {
+  setError(
+    "Please complete customer, site, tool, engineer and calibration date."
+  );
+  return;
+}
 
     try {
       await db.execute(
         `
         INSERT INTO calibration_jobs (
-          customer_name,
-          site_name,
-          tool_id,
-          tool_type,
-          engineer_name,
-          status,
-          created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+  customer_name,
+  site_name,
+  tool_id,
+  tool_type,
+  engineer_name,
+  status,
+  created_at,
+  calibration_date,
+  temperature,
+  humidity,
+  reference_instrument,
+  adjustment_made,
+  engineer_notes
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         `,
         [
-          customerName,
-          siteName,
-          toolId,
-          toolType,
-          engineerName,
-          "Draft",
-          new Date().toISOString(),
-        ]
+  customerName,
+  siteName,
+  toolId,
+  toolType,
+  engineerName,
+  "Draft",
+  new Date().toISOString(),
+  calibrationDate,
+  temperature,
+  humidity,
+  referenceInstrument,
+  adjustmentMade,
+  engineerNotes,
+]
       );
 
       setCustomerName("");
@@ -390,6 +432,12 @@ await addMissingColumn(
       setToolId("");
       setToolType("");
       setEngineerName("");
+setCalibrationDate("");
+setTemperature("");
+setHumidity("");
+setReferenceInstrument("");
+setAdjustmentMade("");
+setEngineerNotes("");
       setError("");
       setShowForm(false);
 
@@ -606,36 +654,72 @@ await addMissingColumn(
           </div>
 
           <div className="detail-grid">
-            <div>
-              <span>Customer</span>
-              <strong>{selectedJob.customer_name}</strong>
-            </div>
+  <div>
+    <span>Customer</span>
+    <strong>{selectedJob.customer_name}</strong>
+  </div>
 
-            <div>
-              <span>Site</span>
-              <strong>{selectedJob.site_name}</strong>
-            </div>
+  <div>
+    <span>Site</span>
+    <strong>{selectedJob.site_name}</strong>
+  </div>
 
-            <div>
-              <span>Tool ID</span>
-              <strong>{selectedJob.tool_id}</strong>
-            </div>
+  <div>
+    <span>Tool ID</span>
+    <strong>{selectedJob.tool_id}</strong>
+  </div>
 
-            <div>
-              <span>Tool Type</span>
-              <strong>{selectedJob.tool_type}</strong>
-            </div>
+  <div>
+    <span>Tool Type</span>
+    <strong>{selectedJob.tool_type}</strong>
+  </div>
 
-            <div>
-              <span>Engineer</span>
-              <strong>{selectedJob.engineer_name}</strong>
-            </div>
+  <div>
+    <span>Engineer</span>
+    <strong>{selectedJob.engineer_name}</strong>
+  </div>
 
-            <div>
-              <span>Status</span>
-              <strong>{selectedJob.status}</strong>
-            </div>
-          </div>
+  <div>
+    <span>Status</span>
+    <strong>{selectedJob.status}</strong>
+  </div>
+
+  <div>
+    <span>Calibration Date</span>
+    <strong>{displayValue(selectedJob.calibration_date)}</strong>
+  </div>
+
+  <div>
+    <span>Reference Instrument</span>
+    <strong>{displayValue(selectedJob.reference_instrument)}</strong>
+  </div>
+
+  <div>
+    <span>Temperature</span>
+    <strong>{displayValue(selectedJob.temperature)}</strong>
+  </div>
+
+  <div>
+    <span>Humidity</span>
+    <strong>{displayValue(selectedJob.humidity)}</strong>
+  </div>
+</div>
+
+<section className="metadata-panel">
+  <h2>Environmental / Engineer Notes</h2>
+
+  <div className="metadata-grid">
+    <div>
+      <span>Adjustment Made</span>
+      <strong>{displayValue(selectedJob.adjustment_made)}</strong>
+    </div>
+
+    <div>
+      <span>Engineer Notes</span>
+      <strong>{displayValue(selectedJob.engineer_notes)}</strong>
+    </div>
+  </div>
+</section>
 
           {isJobLocked && (
             <section className="locked-panel">
@@ -1004,6 +1088,65 @@ await addMissingColumn(
                 placeholder="e.g. Luke"
               />
             </label>
+<label>
+  Calibration Date
+  <input
+    type="date"
+    value={calibrationDate}
+    onChange={(event) => setCalibrationDate(event.target.value)}
+  />
+</label>
+
+<label>
+  Temperature
+  <input
+    value={temperature}
+    onChange={(event) => setTemperature(event.target.value)}
+    placeholder="e.g. 20 °C"
+  />
+</label>
+
+<label>
+  Humidity
+  <input
+    value={humidity}
+    onChange={(event) => setHumidity(event.target.value)}
+    placeholder="e.g. 45%"
+  />
+</label>
+
+<label>
+  Reference Instrument
+  <select
+    value={referenceInstrument}
+    onChange={(event) => setReferenceInstrument(event.target.value)}
+  >
+    <option value="">Select reference instrument...</option>
+    {REFERENCE_INSTRUMENTS.map((instrument) => (
+      <option key={instrument} value={instrument}>
+        {instrument}
+      </option>
+    ))}
+  </select>
+</label>
+
+<label className="full-width-field">
+  Adjustment Made
+  <textarea
+    value={adjustmentMade}
+    onChange={(event) => setAdjustmentMade(event.target.value)}
+    placeholder="e.g. No adjustment made / Adjusted before final readings"
+  />
+</label>
+
+<label className="full-width-field">
+  Engineer Notes
+  <textarea
+    value={engineerNotes}
+    onChange={(event) => setEngineerNotes(event.target.value)}
+    placeholder="Any notes about condition, access, environment, or engineer observations"
+  />
+</label>
 
             <button type="submit">Save Offline</button>
           </form>
