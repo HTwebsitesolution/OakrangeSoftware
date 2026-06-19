@@ -1,198 +1,31 @@
 import { useEffect, useState, type FormEvent } from "react";
-import Database from "@tauri-apps/plugin-sql";
 import "./App.css";
-
-type CalibrationJob = {
-  id: number;
-  customer_name: string;
-  site_name: string;
-  tool_id: string;
-  tool_type: string;
-  engineer_name: string;
-  status: string;
-  created_at: string;
-  calibration_date?: string | null;
-  temperature?: string | null;
-  humidity?: string | null;
-  reference_instrument?: string | null;
-  engineer_notes?: string | null;
-  adjustment_made?: string | null;
-};
-
-type CalibrationReading = {
-  id: number;
-  job_id: number;
-  test_point: string;
-  actual_reading: string;
-  error_value: string;
-  result: string;
-  created_at: string;
-};
-
-type CalibrationTestPoint = {
-  label: string;
-  nominalValue: number;
-  unit: string;
-  tolerance: number;
-};
-
-type CalibrationTemplate = {
-  toolType: string;
-  unit: string;
-  testPoints: CalibrationTestPoint[];
-};
-
-type ReferenceInstrument = {
-  id: number;
-  name: string;
-  certificate_number: string;
-  calibration_due_date: string;
-  created_at: string;
-};
-
-type DbConnection = Awaited<ReturnType<typeof Database.load>>;
-
-const DB_PATH = "sqlite:oakrange_calibration.db";
-
-const CALIBRATION_TEMPLATES: CalibrationTemplate[] = [
-  {
-    toolType: "Torque Wrench",
-    unit: "Nm",
-    testPoints: [
-      {
-        label: "20 Nm",
-        nominalValue: 20,
-        unit: "Nm",
-        tolerance: 1,
-      },
-      {
-        label: "60 Nm",
-        nominalValue: 60,
-        unit: "Nm",
-        tolerance: 2,
-      },
-      {
-        label: "100 Nm",
-        nominalValue: 100,
-        unit: "Nm",
-        tolerance: 3,
-      },
-    ],
-  },
-  {
-    toolType: "Pressure Gauge",
-    unit: "bar / psi",
-    testPoints: [],
-  },
-  {
-    toolType: "Tyre Inflator",
-    unit: "psi / bar",
-    testPoints: [],
-  },
-  {
-    toolType: "Wheel Balancer",
-    unit: "g",
-    testPoints: [],
-  },
-];
-
-function getTemplate(toolType: string) {
-  return CALIBRATION_TEMPLATES.find(
-    (template) => template.toolType === toolType
-  );
-}
-
-function getNumberFromText(value: string) {
-  const match = value.match(/-?\d+(\.\d+)?/);
-  return match ? Number(match[0]) : null;
-}
-
-function formatSignedNumber(value: number) {
-  const fixedValue = value.toFixed(2);
-  return value > 0 ? `+${fixedValue}` : fixedValue;
-}
-
-function normaliseText(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function getReadingForPoint(readings: CalibrationReading[], pointLabel: string) {
-  return readings.find(
-    (reading) => normaliseText(reading.test_point) === normaliseText(pointLabel)
-  );
-}
-
-function getResultClass(result: string) {
-  if (result === "Pass") return "badge badge-pass";
-  if (result === "Fail") return "badge badge-fail";
-  if (result === "Adjusted") return "badge badge-adjusted";
-  return "badge";
-}
-function displayValue(value: string | null | undefined) {
-  return value && value.trim().length > 0 ? value : "Not recorded";
-}
-
-function formatInstrumentLabel(instrument: ReferenceInstrument) {
-  return `${instrument.name} - ${instrument.certificate_number}`;
-}
-
-function parseDateOnly(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-
-  if (!year || !month || !day) {
-    return null;
-  }
-
-  return new Date(year, month - 1, day);
-}
-
-function isInstrumentExpired(dueDate: string) {
-  const due = parseDateOnly(dueDate);
-
-  if (!due) {
-    return false;
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  return due < today;
-}
-
-function getInstrumentValidity(dueDate: string) {
-  return isInstrumentExpired(dueDate) ? "Expired" : "Valid";
-}
-
-function formatDisplayDate(value: string) {
-  const parsed = parseDateOnly(value);
-
-  if (!parsed) {
-    return value;
-  }
-
-  return parsed.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-async function addMissingColumn(
-  database: DbConnection,
-  columnName: string,
-  columnDefinition: string
-) {
-  const columns = await database.select<Array<{ name: string }>>(
-    "PRAGMA table_info(calibration_jobs)"
-  );
-
-  const columnExists = columns.some((column) => column.name === columnName);
-
-  if (!columnExists) {
-    await database.execute(
-      `ALTER TABLE calibration_jobs ADD COLUMN ${columnDefinition}`
-    );
-  }
-}
+import Dashboard from "./components/Dashboard";
+import JobDetail from "./components/JobDetail";
+import ReferenceInstrumentsScreen from "./components/ReferenceInstruments";
+import {
+  calculateErrorAndResult,
+  getReadingForPoint,
+  getTemplate,
+  normaliseText,
+} from "./calibrationTemplates";
+import {
+  fetchJobs,
+  fetchReadings,
+  fetchReferenceInstruments,
+  setupDatabase,
+} from "./db";
+import {
+  formatInstrumentLabel,
+  isInstrumentExpired,
+} from "./referenceInstruments";
+import type {
+  CalibrationJob,
+  CalibrationReading,
+  CalibrationTestPoint,
+  DbConnection,
+  ReferenceInstrument,
+} from "./types";
 
 function App() {
   const [db, setDb] = useState<DbConnection | null>(null);
@@ -213,12 +46,12 @@ function App() {
   const [toolId, setToolId] = useState("");
   const [toolType, setToolType] = useState("");
   const [engineerName, setEngineerName] = useState("");
-const [calibrationDate, setCalibrationDate] = useState("");
-const [temperature, setTemperature] = useState("");
-const [humidity, setHumidity] = useState("");
-const [referenceInstrument, setReferenceInstrument] = useState("");
-const [adjustmentMade, setAdjustmentMade] = useState("");
-const [engineerNotes, setEngineerNotes] = useState("");
+  const [calibrationDate, setCalibrationDate] = useState("");
+  const [temperature, setTemperature] = useState("");
+  const [humidity, setHumidity] = useState("");
+  const [referenceInstrument, setReferenceInstrument] = useState("");
+  const [adjustmentMade, setAdjustmentMade] = useState("");
+  const [engineerNotes, setEngineerNotes] = useState("");
 
   const [instrumentName, setInstrumentName] = useState("");
   const [certificateNumber, setCertificateNumber] = useState("");
@@ -250,7 +83,8 @@ const [engineerNotes, setEngineerNotes] = useState("");
     ? completedRequiredPoints.length === requiredPoints.length
     : readings.length > 0;
 
-  const canMarkReadyForReview = allRequiredPointsCompleted && readings.length > 0;
+  const canMarkReadyForReview =
+    allRequiredPointsCompleted && readings.length > 0;
 
   const selectedReferenceInstrument = referenceInstruments.find(
     (instrument) =>
@@ -261,104 +95,24 @@ const [engineerNotes, setEngineerNotes] = useState("");
     : false;
 
   async function loadJobs(database: DbConnection) {
-    const savedJobs = await database.select<CalibrationJob[]>(
-      "SELECT * FROM calibration_jobs ORDER BY id DESC"
-    );
-
+    const savedJobs = await fetchJobs(database);
     setJobs(savedJobs);
   }
 
   async function loadReadings(database: DbConnection, jobId: number) {
-    const savedReadings = await database.select<CalibrationReading[]>(
-      "SELECT * FROM calibration_readings WHERE job_id = $1 ORDER BY id DESC",
-      [jobId]
-    );
-
+    const savedReadings = await fetchReadings(database, jobId);
     setReadings(savedReadings);
   }
 
   async function loadReferenceInstruments(database: DbConnection) {
-    const savedInstruments = await database.select<ReferenceInstrument[]>(
-      "SELECT * FROM reference_instruments ORDER BY name ASC, id ASC"
-    );
-
+    const savedInstruments = await fetchReferenceInstruments(database);
     setReferenceInstruments(savedInstruments);
   }
 
   useEffect(() => {
-    async function setupDatabase() {
+    async function initDatabase() {
       try {
-        const database = await Database.load(DB_PATH);
-
-        await database.execute(`
-          CREATE TABLE IF NOT EXISTS calibration_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_name TEXT NOT NULL,
-            site_name TEXT NOT NULL,
-            tool_id TEXT NOT NULL,
-            tool_type TEXT NOT NULL,
-            engineer_name TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL
-          )
-        `);
-await addMissingColumn(
-  database,
-  "calibration_date",
-  "calibration_date TEXT"
-);
-
-await addMissingColumn(database, "temperature", "temperature TEXT");
-
-await addMissingColumn(database, "humidity", "humidity TEXT");
-
-await addMissingColumn(
-  database,
-  "reference_instrument",
-  "reference_instrument TEXT"
-);
-
-await addMissingColumn(
-  database,
-  "engineer_notes",
-  "engineer_notes TEXT"
-);
-
-await addMissingColumn(
-  database,
-  "adjustment_made",
-  "adjustment_made TEXT"
-);
-
-        await database.execute(`
-          CREATE TABLE IF NOT EXISTS calibration_readings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id INTEGER NOT NULL,
-            test_point TEXT NOT NULL,
-            actual_reading TEXT NOT NULL,
-            error_value TEXT NOT NULL,
-            result TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (job_id) REFERENCES calibration_jobs(id)
-          )
-        `);
-
-        await database.execute(`
-          CREATE TABLE IF NOT EXISTS reference_instruments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            certificate_number TEXT NOT NULL,
-            calibration_due_date TEXT NOT NULL,
-            created_at TEXT NOT NULL
-          )
-        `);
-
-        await database.execute(`
-          UPDATE calibration_jobs
-          SET status = 'Draft'
-          WHERE status = 'Saved Offline'
-        `);
-
+        const database = await setupDatabase();
         setDb(database);
         await loadJobs(database);
         await loadReferenceInstruments(database);
@@ -367,30 +121,8 @@ await addMissingColumn(
       }
     }
 
-    setupDatabase();
+    initDatabase();
   }, []);
-
-  function calculateErrorAndResult(pointLabel: string, actualText: string) {
-    const matchingPoint = selectedJobTemplate?.testPoints.find(
-      (point) => point.label === pointLabel
-    );
-
-    const actualValue = getNumberFromText(actualText);
-
-    if (!matchingPoint || actualValue === null) {
-      return null;
-    }
-
-    const calculatedError = actualValue - matchingPoint.nominalValue;
-    const roundedError = Number(calculatedError.toFixed(2));
-    const calculatedResult =
-      Math.abs(roundedError) <= matchingPoint.tolerance ? "Pass" : "Fail";
-
-    return {
-      errorText: `${formatSignedNumber(roundedError)} ${matchingPoint.unit}`,
-      resultText: calculatedResult,
-    };
-  }
 
   function resetReadingForm() {
     setTestPoint("");
@@ -405,7 +137,11 @@ await addMissingColumn(
 
     setTestPoint(point.label);
 
-    const calculation = calculateErrorAndResult(point.label, actualReading);
+    const calculation = calculateErrorAndResult(
+      selectedJobTemplate,
+      point.label,
+      actualReading
+    );
 
     if (calculation) {
       setErrorValue(calculation.errorText);
@@ -416,7 +152,11 @@ await addMissingColumn(
   function handleTestPointChange(value: string) {
     setTestPoint(value);
 
-    const calculation = calculateErrorAndResult(value, actualReading);
+    const calculation = calculateErrorAndResult(
+      selectedJobTemplate,
+      value,
+      actualReading
+    );
 
     if (calculation) {
       setErrorValue(calculation.errorText);
@@ -427,7 +167,11 @@ await addMissingColumn(
   function handleActualReadingChange(value: string) {
     setActualReading(value);
 
-    const calculation = calculateErrorAndResult(testPoint, value);
+    const calculation = calculateErrorAndResult(
+      selectedJobTemplate,
+      testPoint,
+      value
+    );
 
     if (calculation) {
       setErrorValue(calculation.errorText);
@@ -460,54 +204,54 @@ await addMissingColumn(
     }
 
     if (
-  !customerName ||
-  !siteName ||
-  !toolId ||
-  !toolType ||
-  !engineerName ||
-  !calibrationDate
-) {
-  setError(
-    "Please complete customer, site, tool, engineer and calibration date."
-  );
-  return;
-}
+      !customerName ||
+      !siteName ||
+      !toolId ||
+      !toolType ||
+      !engineerName ||
+      !calibrationDate
+    ) {
+      setError(
+        "Please complete customer, site, tool, engineer and calibration date."
+      );
+      return;
+    }
 
     try {
       await db.execute(
         `
         INSERT INTO calibration_jobs (
-  customer_name,
-  site_name,
-  tool_id,
-  tool_type,
-  engineer_name,
-  status,
-  created_at,
-  calibration_date,
-  temperature,
-  humidity,
-  reference_instrument,
-  adjustment_made,
-  engineer_notes
-)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          customer_name,
+          site_name,
+          tool_id,
+          tool_type,
+          engineer_name,
+          status,
+          created_at,
+          calibration_date,
+          temperature,
+          humidity,
+          reference_instrument,
+          adjustment_made,
+          engineer_notes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         `,
         [
-  customerName,
-  siteName,
-  toolId,
-  toolType,
-  engineerName,
-  "Draft",
-  new Date().toISOString(),
-  calibrationDate,
-  temperature,
-  humidity,
-  referenceInstrument,
-  adjustmentMade,
-  engineerNotes,
-]
+          customerName,
+          siteName,
+          toolId,
+          toolType,
+          engineerName,
+          "Draft",
+          new Date().toISOString(),
+          calibrationDate,
+          temperature,
+          humidity,
+          referenceInstrument,
+          adjustmentMade,
+          engineerNotes,
+        ]
       );
 
       setCustomerName("");
@@ -515,12 +259,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       setToolId("");
       setToolType("");
       setEngineerName("");
-setCalibrationDate("");
-setTemperature("");
-setHumidity("");
-setReferenceInstrument("");
-setAdjustmentMade("");
-setEngineerNotes("");
+      setCalibrationDate("");
+      setTemperature("");
+      setHumidity("");
+      setReferenceInstrument("");
+      setAdjustmentMade("");
+      setEngineerNotes("");
       setError("");
       setShowForm(false);
 
@@ -548,7 +292,9 @@ setEngineerNotes("");
 
   function editReading(reading: CalibrationReading) {
     if (isJobLocked) {
-      setError("This job is Ready for Review. Return it to Draft before editing.");
+      setError(
+        "This job is Ready for Review. Return it to Draft before editing."
+      );
       return;
     }
 
@@ -564,7 +310,9 @@ setEngineerNotes("");
     if (!db || !selectedJob) return;
 
     if (isJobLocked) {
-      setError("This job is Ready for Review. Return it to Draft before deleting.");
+      setError(
+        "This job is Ready for Review. Return it to Draft before deleting."
+      );
       return;
     }
 
@@ -589,7 +337,9 @@ setEngineerNotes("");
       );
 
       const remainingCount = Number(remainingRows[0]?.count ?? 0);
-      await updateSelectedJobStatus(remainingCount > 0 ? "In Progress" : "Draft");
+      await updateSelectedJobStatus(
+        remainingCount > 0 ? "In Progress" : "Draft"
+      );
 
       await loadReadings(db, selectedJob.id);
       setError("");
@@ -607,7 +357,9 @@ setEngineerNotes("");
     }
 
     if (isJobLocked) {
-      setError("This job is Ready for Review. Return it to Draft before editing.");
+      setError(
+        "This job is Ready for Review. Return it to Draft before editing."
+      );
       return;
     }
 
@@ -769,683 +521,97 @@ setEngineerNotes("");
 
   if (showReferenceInstruments) {
     return (
-      <main className="app-shell">
-        <section className="dashboard-card">
-          <p className="eyebrow">Oakrange Engineering</p>
-
-          <h1>Reference Instruments</h1>
-
-          <p className="subtitle">
-            Local register of calibration reference instruments
-          </p>
-
-          <div className="top-action-row">
-            <button
-              type="button"
-              onClick={() => {
-                setShowReferenceInstruments(false);
-                setError("");
-              }}
-            >
-              Back to Dashboard
-            </button>
-          </div>
-
-          {error && <p className="error-message">{error}</p>}
-
-          <form className="job-form" onSubmit={saveReferenceInstrument}>
-            <h2>Add Reference Instrument</h2>
-
-            <label>
-              Instrument Name
-              <input
-                value={instrumentName}
-                onChange={(event) => setInstrumentName(event.target.value)}
-                placeholder="e.g. Torque Reference Instrument"
-              />
-            </label>
-
-            <label>
-              Certificate Number
-              <input
-                value={certificateNumber}
-                onChange={(event) => setCertificateNumber(event.target.value)}
-                placeholder="e.g. REF-TW-001"
-              />
-            </label>
-
-            <label>
-              Calibration Due Date
-              <input
-                type="date"
-                value={calibrationDueDate}
-                onChange={(event) =>
-                  setCalibrationDueDate(event.target.value)
-                }
-              />
-            </label>
-
-            <button type="submit">Save Reference Instrument</button>
-          </form>
-
-          <section className="jobs-list">
-            <h2>Saved Reference Instruments</h2>
-
-            {referenceInstruments.length === 0 ? (
-              <p className="empty-state">
-                No reference instruments saved yet. Add one above to use it in
-                calibration jobs.
-              </p>
-            ) : (
-              <div className="instruments-table">
-                <div className="instruments-header">
-                  <span>Name</span>
-                  <span>Certificate</span>
-                  <span>Due Date</span>
-                  <span>Status</span>
-                </div>
-
-                {referenceInstruments.map((instrument) => {
-                  const validity = getInstrumentValidity(
-                    instrument.calibration_due_date
-                  );
-
-                  return (
-                    <article key={instrument.id} className="instruments-row">
-                      <span>{instrument.name}</span>
-                      <span>{instrument.certificate_number}</span>
-                      <span>
-                        {formatDisplayDate(instrument.calibration_due_date)}
-                      </span>
-                      <span
-                        className={
-                          validity === "Valid"
-                            ? "badge badge-valid"
-                            : "badge badge-expired"
-                        }
-                      >
-                        {validity}
-                      </span>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </section>
-      </main>
+      <ReferenceInstrumentsScreen
+        error={error}
+        referenceInstruments={referenceInstruments}
+        instrumentName={instrumentName}
+        onInstrumentNameChange={setInstrumentName}
+        certificateNumber={certificateNumber}
+        onCertificateNumberChange={setCertificateNumber}
+        calibrationDueDate={calibrationDueDate}
+        onCalibrationDueDateChange={setCalibrationDueDate}
+        onBack={() => {
+          setShowReferenceInstruments(false);
+          setError("");
+        }}
+        onSave={saveReferenceInstrument}
+      />
     );
   }
 
   if (selectedJob) {
     return (
-      <main className="app-shell">
-        <section className="dashboard-card">
-          <p className="eyebrow">Oakrange Engineering</p>
-
-          <h1>Job Detail</h1>
-
-          <div className="top-action-row">
-            <button type="button" onClick={() => setSelectedJob(null)}>
-              Back to Dashboard
-            </button>
-          </div>
-
-          <div className="detail-grid">
-  <div>
-    <span>Customer</span>
-    <strong>{selectedJob.customer_name}</strong>
-  </div>
-
-  <div>
-    <span>Site</span>
-    <strong>{selectedJob.site_name}</strong>
-  </div>
-
-  <div>
-    <span>Tool ID</span>
-    <strong>{selectedJob.tool_id}</strong>
-  </div>
-
-  <div>
-    <span>Tool Type</span>
-    <strong>{selectedJob.tool_type}</strong>
-  </div>
-
-  <div>
-    <span>Engineer</span>
-    <strong>{selectedJob.engineer_name}</strong>
-  </div>
-
-  <div>
-    <span>Status</span>
-    <strong>{selectedJob.status}</strong>
-  </div>
-
-  <div>
-    <span>Calibration Date</span>
-    <strong>{displayValue(selectedJob.calibration_date)}</strong>
-  </div>
-
-  <div>
-    <span>Reference Instrument</span>
-    <strong>{displayValue(selectedJob.reference_instrument)}</strong>
-  </div>
-
-  <div>
-    <span>Temperature</span>
-    <strong>{displayValue(selectedJob.temperature)}</strong>
-  </div>
-
-  <div>
-    <span>Humidity</span>
-    <strong>{displayValue(selectedJob.humidity)}</strong>
-  </div>
-</div>
-
-<section className="metadata-panel">
-  <h2>Environmental / Engineer Notes</h2>
-
-  <div className="metadata-grid">
-    <div>
-      <span>Adjustment Made</span>
-      <strong>{displayValue(selectedJob.adjustment_made)}</strong>
-    </div>
-
-    <div>
-      <span>Engineer Notes</span>
-      <strong>{displayValue(selectedJob.engineer_notes)}</strong>
-    </div>
-  </div>
-</section>
-
-          {isJobLocked && (
-            <section className="locked-panel">
-              <strong>This job is locked for review.</strong>
-              <span>
-                Readings cannot be edited or deleted while the job is Ready for
-                Review. Return it to Draft if corrections are needed.
-              </span>
-            </section>
-          )}
-
-          {selectedJobTemplate && (
-            <section className="template-panel">
-              <h2>Calibration Template</h2>
-
-              <p>
-                <strong>{selectedJobTemplate.toolType}</strong> template selected.
-                Unit: <strong>{selectedJobTemplate.unit}</strong>
-              </p>
-
-              {selectedJobTemplate.testPoints.length > 0 ? (
-                <>
-                  <div className="completion-panel">
-                    <strong>
-                      Required points completed: {completedRequiredPoints.length} /{" "}
-                      {requiredPoints.length}
-                    </strong>
-
-                    {allRequiredPointsCompleted ? (
-                      <span className="completion-good">
-                        All required points are complete.
-                      </span>
-                    ) : (
-                      <span className="completion-warning">
-                        Missing:{" "}
-                        {missingRequiredPoints
-                          .map((point) => point.label)
-                          .join(", ")}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="helper-text">
-                    Suggested test points with prototype tolerances. Completed
-                    points are locked to prevent duplicate readings.
-                  </p>
-
-                  <div className="suggested-point-buttons">
-                    {selectedJobTemplate.testPoints.map((point) => {
-                      const existingReading = getReadingForPoint(
-                        readings,
-                        point.label
-                      );
-
-                      return (
-                        <button
-                          key={point.label}
-                          type="button"
-                          className={
-                            existingReading
-                              ? "chip-button chip-button-complete"
-                              : "chip-button"
-                          }
-                          onClick={() => applyTestPoint(point)}
-                          disabled={Boolean(existingReading) || isJobLocked}
-                        >
-                          <span>{point.label}</span>
-                          <small>
-                            Nominal {point.nominalValue} {point.unit} | ±
-                            {point.tolerance.toFixed(2)} {point.unit}
-                          </small>
-                          {existingReading && <small>Completed</small>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              ) : (
-                <p className="helper-text">
-                  No required test points have been added for this tool type yet.
-                </p>
-              )}
-            </section>
-          )}
-
-          {error && <p className="error-message">{error}</p>}
-
-          <form className="job-form" onSubmit={saveReading}>
-            <h2>{editingReadingId ? "Edit Calibration Reading" : "Add Calibration Reading"}</h2>
-
-            <label>
-              Test Point
-              <input
-                value={testPoint}
-                onChange={(event) => handleTestPointChange(event.target.value)}
-                placeholder="e.g. 20 Nm"
-                disabled={isJobLocked}
-              />
-            </label>
-
-            <label>
-              Actual Reading
-              <input
-                value={actualReading}
-                onChange={(event) =>
-                  handleActualReadingChange(event.target.value)
-                }
-                placeholder="e.g. 20.1 Nm"
-                disabled={isJobLocked}
-              />
-            </label>
-
-            <label>
-              Error
-              <input
-                value={errorValue}
-                onChange={(event) => setErrorValue(event.target.value)}
-                placeholder="Auto-calculated where possible"
-                disabled={isJobLocked}
-              />
-            </label>
-
-            <label>
-              Result
-              <select
-                value={result}
-                onChange={(event) => setResult(event.target.value)}
-                disabled={isJobLocked}
-              >
-                <option value="Pass">Pass</option>
-                <option value="Fail">Fail</option>
-                <option value="Adjusted">Adjusted</option>
-              </select>
-            </label>
-
-            <p className="calculation-note">
-              For Torque Wrench prototype rules, the app calculates Error as:
-              Actual Reading minus Nominal Test Point. It then sets Pass or Fail
-              using the prototype tolerance.
-            </p>
-
-            <div className="form-action-row">
-              <button type="submit" disabled={isJobLocked}>
-                {editingReadingId ? "Update Reading" : "Save Reading Offline"}
-              </button>
-
-              {editingReadingId && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={resetReadingForm}
-                  disabled={isJobLocked}
-                >
-                  Cancel Edit
-                </button>
-              )}
-            </div>
-          </form>
-
-          <section className="jobs-list">
-            <h2>Calibration Readings</h2>
-
-            {readings.length === 0 ? (
-              <p className="empty-state">No readings added yet.</p>
-            ) : (
-              <div className="readings-table">
-                <div className="readings-header readings-header-with-actions">
-                  <span>Test Point</span>
-                  <span>Nominal</span>
-                  <span>Tolerance</span>
-                  <span>Actual</span>
-                  <span>Error</span>
-                  <span>Result</span>
-                  <span>Actions</span>
-                </div>
-
-                {readings.map((reading) => {
-                  const templatePoint = selectedJobTemplate?.testPoints.find(
-                    (point) =>
-                      normaliseText(point.label) ===
-                      normaliseText(reading.test_point)
-                  );
-
-                  return (
-                    <article
-                      key={reading.id}
-                      className="readings-row readings-row-with-actions"
-                    >
-                      <span>{reading.test_point}</span>
-                      <span>
-                        {templatePoint
-                          ? `${templatePoint.nominalValue} ${templatePoint.unit}`
-                          : "Manual"}
-                      </span>
-                      <span>
-                        {templatePoint
-                          ? `±${templatePoint.tolerance.toFixed(2)} ${
-                              templatePoint.unit
-                            }`
-                          : "Manual"}
-                      </span>
-                      <span>{reading.actual_reading}</span>
-                      <span>{reading.error_value}</span>
-                      <span className={getResultClass(reading.result)}>
-                        {reading.result}
-                      </span>
-                      <span className="reading-actions">
-                        <button
-                          type="button"
-                          className="small-button secondary-button"
-                          onClick={() => editReading(reading)}
-                          disabled={isJobLocked}
-                        >
-                          Edit
-                        </button>
-
-                        <button
-                          type="button"
-                          className="small-button danger-button"
-                          onClick={() => deleteReading(reading)}
-                          disabled={isJobLocked}
-                        >
-                          Delete
-                        </button>
-                      </span>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <div className="action-row">
-            {isJobLocked ? (
-              <button type="button" onClick={returnToDraft}>
-                Return to Draft
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={markReadyForReview}
-                disabled={!canMarkReadyForReview}
-                title={
-                  canMarkReadyForReview
-                    ? "Ready to submit for office/admin review"
-                    : "Complete all required test points before review"
-                }
-              >
-                Mark Ready for Review
-              </button>
-            )}
-
-            <button type="button" onClick={() => setSelectedJob(null)}>
-              Back to Dashboard
-            </button>
-          </div>
-
-          {!canMarkReadyForReview && !isJobLocked && (
-            <p className="review-blocked-message">
-              Complete all required test points before marking this job Ready for
-              Review.
-            </p>
-          )}
-        </section>
-      </main>
+      <JobDetail
+        job={selectedJob}
+        readings={readings}
+        error={error}
+        template={selectedJobTemplate}
+        isJobLocked={isJobLocked}
+        requiredPoints={requiredPoints}
+        completedRequiredPoints={completedRequiredPoints}
+        missingRequiredPoints={missingRequiredPoints}
+        allRequiredPointsCompleted={allRequiredPointsCompleted}
+        canMarkReadyForReview={canMarkReadyForReview}
+        testPoint={testPoint}
+        actualReading={actualReading}
+        errorValue={errorValue}
+        result={result}
+        editingReadingId={editingReadingId}
+        onBack={() => setSelectedJob(null)}
+        onTestPointChange={handleTestPointChange}
+        onActualReadingChange={handleActualReadingChange}
+        onErrorValueChange={setErrorValue}
+        onResultChange={setResult}
+        onApplyTestPoint={applyTestPoint}
+        onSaveReading={saveReading}
+        onResetReadingForm={resetReadingForm}
+        onEditReading={editReading}
+        onDeleteReading={deleteReading}
+        onMarkReadyForReview={markReadyForReview}
+        onReturnToDraft={returnToDraft}
+      />
     );
   }
 
   return (
-    <main className="app-shell">
-      <section className="dashboard-card">
-        <p className="eyebrow">Oakrange Engineering</p>
-
-        <h1>Oakrange Calibration Software</h1>
-
-        <p className="subtitle">Engineer Desktop App</p>
-
-        <div className="button-grid">
-          <button type="button" onClick={() => setShowForm(!showForm)}>
-            New Calibration Job
-          </button>
-
-          <button type="button">Saved Offline Jobs: {jobs.length}</button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setShowReferenceInstruments(true);
-              setShowForm(false);
-              setError("");
-            }}
-          >
-            Reference Instruments: {referenceInstruments.length}
-          </button>
-
-          <button type="button">Sync Status: Offline</button>
-        </div>
-
-        {error && <p className="error-message">{error}</p>}
-
-        {showForm && (
-          <form className="job-form" onSubmit={saveJob}>
-            <h2>New Calibration Job</h2>
-
-            <label>
-              Customer Name
-              <input
-                value={customerName}
-                onChange={(event) => setCustomerName(event.target.value)}
-                placeholder="e.g. Oakrange Customer"
-              />
-            </label>
-
-            <label>
-              Site Name
-              <input
-                value={siteName}
-                onChange={(event) => setSiteName(event.target.value)}
-                placeholder="e.g. Main Workshop"
-              />
-            </label>
-
-            <label>
-              Tool ID
-              <input
-                value={toolId}
-                onChange={(event) => setToolId(event.target.value)}
-                placeholder="e.g. TW-001"
-              />
-            </label>
-
-            <label>
-              Tool Type
-              <select
-                value={toolType}
-                onChange={(event) => setToolType(event.target.value)}
-              >
-                <option value="">Select a tool type...</option>
-                {CALIBRATION_TEMPLATES.map((template) => (
-                  <option key={template.toolType} value={template.toolType}>
-                    {template.toolType}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {selectedTemplate && (
-              <div className="template-preview">
-                <strong>{selectedTemplate.toolType}</strong>
-                <span>Unit: {selectedTemplate.unit}</span>
-
-                {selectedTemplate.testPoints.length > 0 ? (
-                  <span>
-                    Prototype points:{" "}
-                    {selectedTemplate.testPoints
-                      .map(
-                        (point) =>
-                          `${point.label} (±${point.tolerance.toFixed(2)} ${
-                            point.unit
-                          })`
-                      )
-                      .join(", ")}
-                  </span>
-                ) : (
-                  <span>No suggested test points added yet.</span>
-                )}
-              </div>
-            )}
-
-            <label>
-              Engineer Name
-              <input
-                value={engineerName}
-                onChange={(event) => setEngineerName(event.target.value)}
-                placeholder="e.g. Luke"
-              />
-            </label>
-<label>
-  Calibration Date
-  <input
-    type="date"
-    value={calibrationDate}
-    onChange={(event) => setCalibrationDate(event.target.value)}
-  />
-</label>
-
-<label>
-  Temperature
-  <input
-    value={temperature}
-    onChange={(event) => setTemperature(event.target.value)}
-    placeholder="e.g. 20 °C"
-  />
-</label>
-
-<label>
-  Humidity
-  <input
-    value={humidity}
-    onChange={(event) => setHumidity(event.target.value)}
-    placeholder="e.g. 45%"
-  />
-</label>
-
-<label>
-  Reference Instrument
-  <select
-    value={referenceInstrument}
-    onChange={(event) => setReferenceInstrument(event.target.value)}
-  >
-    <option value="">Select reference instrument...</option>
-    {referenceInstruments.map((instrument) => {
-      const label = formatInstrumentLabel(instrument);
-      const validity = getInstrumentValidity(instrument.calibration_due_date);
-
-      return (
-        <option key={instrument.id} value={label}>
-          {label} ({validity})
-        </option>
-      );
-    })}
-  </select>
-</label>
-
-{selectedInstrumentExpired && (
-  <p className="instrument-warning full-width-field">
-    Warning: The selected reference instrument has an expired calibration due
-    date. You can still save this job, but review the instrument before use.
-  </p>
-)}
-
-<label className="full-width-field">
-  Adjustment Made
-  <textarea
-    value={adjustmentMade}
-    onChange={(event) => setAdjustmentMade(event.target.value)}
-    placeholder="e.g. No adjustment made / Adjusted before final readings"
-  />
-</label>
-
-<label className="full-width-field">
-  Engineer Notes
-  <textarea
-    value={engineerNotes}
-    onChange={(event) => setEngineerNotes(event.target.value)}
-    placeholder="Any notes about condition, access, environment, or engineer observations"
-  />
-</label>
-
-            <button type="submit">Save Offline</button>
-          </form>
-        )}
-
-        <section className="jobs-list">
-          <h2>Saved Offline Jobs</h2>
-
-          {jobs.length === 0 ? (
-            <p className="empty-state">No jobs saved yet.</p>
-          ) : (
-            <div className="job-table">
-              {jobs.map((job) => (
-                <button
-                  key={job.id}
-                  type="button"
-                  className="job-row job-row-button"
-                  onClick={() => openJob(job)}
-                >
-                  <div>
-                    <strong>{job.customer_name}</strong>
-                    <span>{job.site_name}</span>
-                  </div>
-
-                  <div>
-                    <strong>{job.tool_id}</strong>
-                    <span>{job.tool_type}</span>
-                  </div>
-
-                  <div>
-                    <strong>{job.engineer_name}</strong>
-                    <span>{job.status === "Saved Offline" ? "Draft" : job.status}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      </section>
-    </main>
+    <Dashboard
+      jobs={jobs}
+      error={error}
+      showForm={showForm}
+      onToggleForm={() => setShowForm(!showForm)}
+      onOpenReferenceInstruments={() => {
+        setShowReferenceInstruments(true);
+        setShowForm(false);
+        setError("");
+      }}
+      onOpenJob={openJob}
+      onSaveJob={saveJob}
+      referenceInstruments={referenceInstruments}
+      selectedTemplate={selectedTemplate}
+      selectedInstrumentExpired={selectedInstrumentExpired}
+      customerName={customerName}
+      onCustomerNameChange={setCustomerName}
+      siteName={siteName}
+      onSiteNameChange={setSiteName}
+      toolId={toolId}
+      onToolIdChange={setToolId}
+      toolType={toolType}
+      onToolTypeChange={setToolType}
+      engineerName={engineerName}
+      onEngineerNameChange={setEngineerName}
+      calibrationDate={calibrationDate}
+      onCalibrationDateChange={setCalibrationDate}
+      temperature={temperature}
+      onTemperatureChange={setTemperature}
+      humidity={humidity}
+      onHumidityChange={setHumidity}
+      referenceInstrument={referenceInstrument}
+      onReferenceInstrumentChange={setReferenceInstrument}
+      adjustmentMade={adjustmentMade}
+      onAdjustmentMadeChange={setAdjustmentMade}
+      engineerNotes={engineerNotes}
+      onEngineerNotesChange={setEngineerNotes}
+    />
   );
 }
 
