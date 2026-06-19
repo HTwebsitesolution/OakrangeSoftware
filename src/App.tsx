@@ -134,11 +134,14 @@ function App() {
   const [actualReading, setActualReading] = useState("");
   const [errorValue, setErrorValue] = useState("");
   const [result, setResult] = useState("Pass");
+  const [editingReadingId, setEditingReadingId] = useState<number | null>(null);
 
   const selectedTemplate = getTemplate(toolType);
   const selectedJobTemplate = selectedJob
     ? getTemplate(selectedJob.tool_type)
     : undefined;
+
+  const isJobLocked = selectedJob?.status === "Ready for Review";
 
   const requiredPoints = selectedJobTemplate?.testPoints ?? [];
   const completedRequiredPoints = requiredPoints.filter((point) =>
@@ -203,6 +206,12 @@ function App() {
           )
         `);
 
+        await database.execute(`
+          UPDATE calibration_jobs
+          SET status = 'Draft'
+          WHERE status = 'Saved Offline'
+        `);
+
         setDb(database);
         await loadJobs(database);
       } catch (err) {
@@ -235,7 +244,17 @@ function App() {
     };
   }
 
+  function resetReadingForm() {
+    setTestPoint("");
+    setActualReading("");
+    setErrorValue("");
+    setResult("Pass");
+    setEditingReadingId(null);
+  }
+
   function applyTestPoint(point: CalibrationTestPoint) {
+    if (isJobLocked) return;
+
     setTestPoint(point.label);
 
     const calculation = calculateErrorAndResult(point.label, actualReading);
@@ -266,6 +285,22 @@ function App() {
       setErrorValue(calculation.errorText);
       setResult(calculation.resultText);
     }
+  }
+
+  async function updateSelectedJobStatus(status: string) {
+    if (!db || !selectedJob) return;
+
+    await db.execute("UPDATE calibration_jobs SET status = $1 WHERE id = $2", [
+      status,
+      selectedJob.id,
+    ]);
+
+    setSelectedJob({
+      ...selectedJob,
+      status,
+    });
+
+    await loadJobs(db);
   }
 
   async function saveJob(event: FormEvent<HTMLFormElement>) {
@@ -301,7 +336,7 @@ function App() {
           toolId,
           toolType,
           engineerName,
-          "Saved Offline",
+          "Draft",
           new Date().toISOString(),
         ]
       );
@@ -323,14 +358,69 @@ function App() {
   async function openJob(job: CalibrationJob) {
     if (!db) return;
 
-    setSelectedJob(job);
+    const cleanedStatus = job.status === "Saved Offline" ? "Draft" : job.status;
+
+    setSelectedJob({
+      ...job,
+      status: cleanedStatus,
+    });
+
     setError("");
-    setTestPoint("");
-    setActualReading("");
-    setErrorValue("");
-    setResult("Pass");
+    resetReadingForm();
 
     await loadReadings(db, job.id);
+  }
+
+  function editReading(reading: CalibrationReading) {
+    if (isJobLocked) {
+      setError("This job is Ready for Review. Return it to Draft before editing.");
+      return;
+    }
+
+    setEditingReadingId(reading.id);
+    setTestPoint(reading.test_point);
+    setActualReading(reading.actual_reading);
+    setErrorValue(reading.error_value);
+    setResult(reading.result);
+    setError("");
+  }
+
+  async function deleteReading(reading: CalibrationReading) {
+    if (!db || !selectedJob) return;
+
+    if (isJobLocked) {
+      setError("This job is Ready for Review. Return it to Draft before deleting.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete the reading for ${reading.test_point}? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await db.execute("DELETE FROM calibration_readings WHERE id = $1", [
+        reading.id,
+      ]);
+
+      if (editingReadingId === reading.id) {
+        resetReadingForm();
+      }
+
+      const remainingRows = await db.select<Array<{ count: number }>>(
+        "SELECT COUNT(*) as count FROM calibration_readings WHERE job_id = $1",
+        [selectedJob.id]
+      );
+
+      const remainingCount = Number(remainingRows[0]?.count ?? 0);
+      await updateSelectedJobStatus(remainingCount > 0 ? "In Progress" : "Draft");
+
+      await loadReadings(db, selectedJob.id);
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
   }
 
   async function saveReading(event: FormEvent<HTMLFormElement>) {
@@ -341,49 +431,71 @@ function App() {
       return;
     }
 
+    if (isJobLocked) {
+      setError("This job is Ready for Review. Return it to Draft before editing.");
+      return;
+    }
+
     if (!testPoint || !actualReading || !errorValue || !result) {
       setError("Please complete all reading fields.");
       return;
     }
 
     const duplicateReading = readings.some(
-      (reading) => normaliseText(reading.test_point) === normaliseText(testPoint)
+      (reading) =>
+        reading.id !== editingReadingId &&
+        normaliseText(reading.test_point) === normaliseText(testPoint)
     );
 
     if (duplicateReading) {
       setError(
-        `A reading already exists for ${testPoint}. Duplicate readings are not allowed in this prototype.`
+        `A reading already exists for ${testPoint}. Duplicate readings are not allowed.`
       );
       return;
     }
 
     try {
-      await db.execute(
-        `
-        INSERT INTO calibration_readings (
-          job_id,
-          test_point,
-          actual_reading,
-          error_value,
-          result,
-          created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        `,
-        [
-          selectedJob.id,
-          testPoint,
-          actualReading,
-          errorValue,
-          result,
-          new Date().toISOString(),
-        ]
-      );
+      if (editingReadingId) {
+        await db.execute(
+          `
+          UPDATE calibration_readings
+          SET test_point = $1,
+              actual_reading = $2,
+              error_value = $3,
+              result = $4
+          WHERE id = $5
+          `,
+          [testPoint, actualReading, errorValue, result, editingReadingId]
+        );
+      } else {
+        await db.execute(
+          `
+          INSERT INTO calibration_readings (
+            job_id,
+            test_point,
+            actual_reading,
+            error_value,
+            result,
+            created_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+          `,
+          [
+            selectedJob.id,
+            testPoint,
+            actualReading,
+            errorValue,
+            result,
+            new Date().toISOString(),
+          ]
+        );
+      }
 
-      setTestPoint("");
-      setActualReading("");
-      setErrorValue("");
-      setResult("Pass");
+      if (selectedJob.status === "Draft") {
+        await updateSelectedJobStatus("In Progress");
+      }
+
+      resetReadingForm();
       setError("");
 
       await loadReadings(db, selectedJob.id);
@@ -410,18 +522,25 @@ function App() {
     }
 
     try {
-      await db.execute(
-        "UPDATE calibration_jobs SET status = $1 WHERE id = $2",
-        ["Ready for Review", selectedJob.id]
-      );
+      await updateSelectedJobStatus("Ready for Review");
+      resetReadingForm();
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
 
-      const updatedJob = {
-        ...selectedJob,
-        status: "Ready for Review",
-      };
+  async function returnToDraft() {
+    if (!db || !selectedJob) return;
 
-      setSelectedJob(updatedJob);
-      await loadJobs(db);
+    const confirmed = window.confirm(
+      "Return this job to Draft? This will unlock the readings for correction."
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await updateSelectedJobStatus("Draft");
       setError("");
     } catch (err) {
       setError(String(err));
@@ -473,6 +592,16 @@ function App() {
               <strong>{selectedJob.status}</strong>
             </div>
           </div>
+
+          {isJobLocked && (
+            <section className="locked-panel">
+              <strong>This job is locked for review.</strong>
+              <span>
+                Readings cannot be edited or deleted while the job is Ready for
+                Review. Return it to Draft if corrections are needed.
+              </span>
+            </section>
+          )}
 
           {selectedJobTemplate && (
             <section className="template-panel">
@@ -527,7 +656,7 @@ function App() {
                               : "chip-button"
                           }
                           onClick={() => applyTestPoint(point)}
-                          disabled={Boolean(existingReading)}
+                          disabled={Boolean(existingReading) || isJobLocked}
                         >
                           <span>{point.label}</span>
                           <small>
@@ -551,7 +680,7 @@ function App() {
           {error && <p className="error-message">{error}</p>}
 
           <form className="job-form" onSubmit={saveReading}>
-            <h2>Add Calibration Reading</h2>
+            <h2>{editingReadingId ? "Edit Calibration Reading" : "Add Calibration Reading"}</h2>
 
             <label>
               Test Point
@@ -559,6 +688,7 @@ function App() {
                 value={testPoint}
                 onChange={(event) => handleTestPointChange(event.target.value)}
                 placeholder="e.g. 20 Nm"
+                disabled={isJobLocked}
               />
             </label>
 
@@ -570,6 +700,7 @@ function App() {
                   handleActualReadingChange(event.target.value)
                 }
                 placeholder="e.g. 20.1 Nm"
+                disabled={isJobLocked}
               />
             </label>
 
@@ -579,6 +710,7 @@ function App() {
                 value={errorValue}
                 onChange={(event) => setErrorValue(event.target.value)}
                 placeholder="Auto-calculated where possible"
+                disabled={isJobLocked}
               />
             </label>
 
@@ -587,6 +719,7 @@ function App() {
               <select
                 value={result}
                 onChange={(event) => setResult(event.target.value)}
+                disabled={isJobLocked}
               >
                 <option value="Pass">Pass</option>
                 <option value="Fail">Fail</option>
@@ -600,7 +733,22 @@ function App() {
               using the prototype tolerance.
             </p>
 
-            <button type="submit">Save Reading Offline</button>
+            <div className="form-action-row">
+              <button type="submit" disabled={isJobLocked}>
+                {editingReadingId ? "Update Reading" : "Save Reading Offline"}
+              </button>
+
+              {editingReadingId && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={resetReadingForm}
+                  disabled={isJobLocked}
+                >
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </form>
 
           <section className="jobs-list">
@@ -610,13 +758,14 @@ function App() {
               <p className="empty-state">No readings added yet.</p>
             ) : (
               <div className="readings-table">
-                <div className="readings-header">
+                <div className="readings-header readings-header-with-actions">
                   <span>Test Point</span>
                   <span>Nominal</span>
                   <span>Tolerance</span>
                   <span>Actual</span>
                   <span>Error</span>
                   <span>Result</span>
+                  <span>Actions</span>
                 </div>
 
                 {readings.map((reading) => {
@@ -627,7 +776,10 @@ function App() {
                   );
 
                   return (
-                    <article key={reading.id} className="readings-row">
+                    <article
+                      key={reading.id}
+                      className="readings-row readings-row-with-actions"
+                    >
                       <span>{reading.test_point}</span>
                       <span>
                         {templatePoint
@@ -646,6 +798,25 @@ function App() {
                       <span className={getResultClass(reading.result)}>
                         {reading.result}
                       </span>
+                      <span className="reading-actions">
+                        <button
+                          type="button"
+                          className="small-button secondary-button"
+                          onClick={() => editReading(reading)}
+                          disabled={isJobLocked}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          className="small-button danger-button"
+                          onClick={() => deleteReading(reading)}
+                          disabled={isJobLocked}
+                        >
+                          Delete
+                        </button>
+                      </span>
                     </article>
                   );
                 })}
@@ -654,25 +825,31 @@ function App() {
           </section>
 
           <div className="action-row">
-            <button
-              type="button"
-              onClick={markReadyForReview}
-              disabled={!canMarkReadyForReview}
-              title={
-                canMarkReadyForReview
-                  ? "Ready to submit for office/admin review"
-                  : "Complete all required test points before review"
-              }
-            >
-              Mark Ready for Review
-            </button>
+            {isJobLocked ? (
+              <button type="button" onClick={returnToDraft}>
+                Return to Draft
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={markReadyForReview}
+                disabled={!canMarkReadyForReview}
+                title={
+                  canMarkReadyForReview
+                    ? "Ready to submit for office/admin review"
+                    : "Complete all required test points before review"
+                }
+              >
+                Mark Ready for Review
+              </button>
+            )}
 
             <button type="button" onClick={() => setSelectedJob(null)}>
               Back to Dashboard
             </button>
           </div>
 
-          {!canMarkReadyForReview && (
+          {!canMarkReadyForReview && !isJobLocked && (
             <p className="review-blocked-message">
               Complete all required test points before marking this job Ready for
               Review.
@@ -814,7 +991,7 @@ function App() {
 
                   <div>
                     <strong>{job.engineer_name}</strong>
-                    <span>{job.status}</span>
+                    <span>{job.status === "Saved Offline" ? "Draft" : job.status}</span>
                   </div>
                 </button>
               ))}
