@@ -44,3 +44,12 @@ export function formatDisplayDate(value: string) {
     year: "numeric",
   });
 }
+
+export function getExpiredInstrumentSaveWarning() {
+  return (
+    "IMPORTANT: The selected reference instrument has an EXPIRED calibration due date.\n\n" +
+    "This instrument should be replaced or re-calibrated before use. " +
+    "Saving this job with an expired reference instrument may affect calibration traceability.\n\n" +
+    "Do you want to save anyway?"
+  );
+}

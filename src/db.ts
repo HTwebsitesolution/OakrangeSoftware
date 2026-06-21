@@ -103,3 +103,95 @@ export async function fetchReferenceInstruments(database: DbConnection) {
     "SELECT * FROM reference_instruments ORDER BY name ASC, id ASC"
   );
 }
+
+export type JobMetadataUpdate = {
+  customer_name: string;
+  site_name: string;
+  tool_id: string;
+  tool_type: string;
+  engineer_name: string;
+  calibration_date: string;
+  temperature: string;
+  humidity: string;
+  reference_instrument: string;
+  adjustment_made: string;
+  engineer_notes: string;
+};
+
+export async function updateJobMetadata(
+  database: DbConnection,
+  jobId: number,
+  metadata: JobMetadataUpdate
+) {
+  await database.execute(
+    `
+    UPDATE calibration_jobs
+    SET customer_name = $1,
+        site_name = $2,
+        tool_id = $3,
+        tool_type = $4,
+        engineer_name = $5,
+        calibration_date = $6,
+        temperature = $7,
+        humidity = $8,
+        reference_instrument = $9,
+        adjustment_made = $10,
+        engineer_notes = $11
+    WHERE id = $12
+    `,
+    [
+      metadata.customer_name,
+      metadata.site_name,
+      metadata.tool_id,
+      metadata.tool_type,
+      metadata.engineer_name,
+      metadata.calibration_date,
+      metadata.temperature,
+      metadata.humidity,
+      metadata.reference_instrument,
+      metadata.adjustment_made,
+      metadata.engineer_notes,
+      jobId,
+    ]
+  );
+}
+
+export async function updateReferenceInstrument(
+  database: DbConnection,
+  instrumentId: number,
+  name: string,
+  certificateNumber: string,
+  calibrationDueDate: string
+) {
+  await database.execute(
+    `
+    UPDATE reference_instruments
+    SET name = $1,
+        certificate_number = $2,
+        calibration_due_date = $3
+    WHERE id = $4
+    `,
+    [name, certificateNumber, calibrationDueDate, instrumentId]
+  );
+}
+
+export async function deleteReferenceInstrument(
+  database: DbConnection,
+  instrumentId: number
+) {
+  await database.execute("DELETE FROM reference_instruments WHERE id = $1", [
+    instrumentId,
+  ]);
+}
+
+export async function countJobsUsingInstrumentLabel(
+  database: DbConnection,
+  instrumentLabel: string
+) {
+  const rows = await database.select<Array<{ count: number }>>(
+    "SELECT COUNT(*) as count FROM calibration_jobs WHERE reference_instrument = $1",
+    [instrumentLabel]
+  );
+
+  return Number(rows[0]?.count ?? 0);
+}

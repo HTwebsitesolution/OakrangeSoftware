@@ -14,9 +14,14 @@ import {
   fetchReadings,
   fetchReferenceInstruments,
   setupDatabase,
+  updateJobMetadata,
+  updateReferenceInstrument,
+  deleteReferenceInstrument,
+  countJobsUsingInstrumentLabel,
 } from "./db";
 import {
   formatInstrumentLabel,
+  getExpiredInstrumentSaveWarning,
   isInstrumentExpired,
 } from "./referenceInstruments";
 import type {
@@ -63,6 +68,24 @@ function App() {
   const [result, setResult] = useState("Pass");
   const [editingReadingId, setEditingReadingId] = useState<number | null>(null);
 
+  const [isEditingJobDetails, setIsEditingJobDetails] = useState(false);
+  const [editCustomerName, setEditCustomerName] = useState("");
+  const [editSiteName, setEditSiteName] = useState("");
+  const [editToolId, setEditToolId] = useState("");
+  const [editToolType, setEditToolType] = useState("");
+  const [editEngineerName, setEditEngineerName] = useState("");
+  const [editCalibrationDate, setEditCalibrationDate] = useState("");
+  const [editTemperature, setEditTemperature] = useState("");
+  const [editHumidity, setEditHumidity] = useState("");
+  const [editReferenceInstrument, setEditReferenceInstrument] = useState("");
+  const [editAdjustmentMade, setEditAdjustmentMade] = useState("");
+  const [editEngineerNotes, setEditEngineerNotes] = useState("");
+  const [toolTypeChangeWarning, setToolTypeChangeWarning] = useState(false);
+
+  const [editingInstrumentId, setEditingInstrumentId] = useState<number | null>(
+    null
+  );
+
   const selectedTemplate = getTemplate(toolType);
   const selectedJobTemplate = selectedJob
     ? getTemplate(selectedJob.tool_type)
@@ -85,6 +108,55 @@ function App() {
   const selectedInstrumentExpired = selectedReferenceInstrument
     ? isInstrumentExpired(selectedReferenceInstrument.calibration_due_date)
     : false;
+
+  const editSelectedReferenceInstrument = referenceInstruments.find(
+    (instrument) =>
+      formatInstrumentLabel(instrument) === editReferenceInstrument
+  );
+  const editSelectedInstrumentExpired = editSelectedReferenceInstrument
+    ? isInstrumentExpired(editSelectedReferenceInstrument.calibration_due_date)
+    : false;
+
+  function getInstrumentJobUsageCount(instrument: ReferenceInstrument) {
+    const label = formatInstrumentLabel(instrument);
+    return jobs.filter((job) => job.reference_instrument === label).length;
+  }
+
+  function resetInstrumentForm() {
+    setInstrumentName("");
+    setCertificateNumber("");
+    setCalibrationDueDate("");
+    setEditingInstrumentId(null);
+  }
+
+  function populateJobEditForm(job: CalibrationJob) {
+    setEditCustomerName(job.customer_name);
+    setEditSiteName(job.site_name);
+    setEditToolId(job.tool_id);
+    setEditToolType(job.tool_type);
+    setEditEngineerName(job.engineer_name);
+    setEditCalibrationDate(job.calibration_date ?? "");
+    setEditTemperature(job.temperature ?? "");
+    setEditHumidity(job.humidity ?? "");
+    setEditReferenceInstrument(job.reference_instrument ?? "");
+    setEditAdjustmentMade(job.adjustment_made ?? "");
+    setEditEngineerNotes(job.engineer_notes ?? "");
+    setToolTypeChangeWarning(false);
+  }
+
+  function handleEditToolTypeChange(value: string) {
+    setEditToolType(value);
+
+    if (selectedJob && readings.length > 0 && value !== selectedJob.tool_type) {
+      setToolTypeChangeWarning(true);
+    } else {
+      setToolTypeChangeWarning(false);
+    }
+  }
+
+  function confirmExpiredInstrumentSave() {
+    return window.confirm(getExpiredInstrumentSaveWarning());
+  }
 
   async function loadJobs(database: DbConnection) {
     const savedJobs = await fetchJobs(database);
@@ -209,6 +281,10 @@ function App() {
       return;
     }
 
+    if (selectedInstrumentExpired && !confirmExpiredInstrumentSave()) {
+      return;
+    }
+
     try {
       await db.execute(
         `
@@ -276,10 +352,106 @@ function App() {
       status: cleanedStatus,
     });
 
+    setIsEditingJobDetails(false);
     setError("");
     resetReadingForm();
+    populateJobEditForm({
+      ...job,
+      status: cleanedStatus,
+    });
 
     await loadReadings(db, job.id);
+  }
+
+  function startEditJobDetails() {
+    if (!selectedJob || isJobLocked) return;
+
+    populateJobEditForm(selectedJob);
+    setIsEditingJobDetails(true);
+    setError("");
+  }
+
+  function cancelEditJobDetails() {
+    if (selectedJob) {
+      populateJobEditForm(selectedJob);
+    }
+
+    setIsEditingJobDetails(false);
+    setError("");
+  }
+
+  async function saveJobDetails(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!db || !selectedJob) {
+      setError("No job selected.");
+      return;
+    }
+
+    if (isJobLocked) {
+      setError(
+        "This job is Ready for Review. Return it to Draft before editing job details."
+      );
+      return;
+    }
+
+    if (
+      !editCustomerName ||
+      !editSiteName ||
+      !editToolId ||
+      !editToolType ||
+      !editEngineerName ||
+      !editCalibrationDate
+    ) {
+      setError(
+        "Please complete customer, site, tool, engineer and calibration date."
+      );
+      return;
+    }
+
+    if (editSelectedInstrumentExpired && !confirmExpiredInstrumentSave()) {
+      return;
+    }
+
+    try {
+      await updateJobMetadata(db, selectedJob.id, {
+        customer_name: editCustomerName,
+        site_name: editSiteName,
+        tool_id: editToolId,
+        tool_type: editToolType,
+        engineer_name: editEngineerName,
+        calibration_date: editCalibrationDate,
+        temperature: editTemperature,
+        humidity: editHumidity,
+        reference_instrument: editReferenceInstrument,
+        adjustment_made: editAdjustmentMade,
+        engineer_notes: editEngineerNotes,
+      });
+
+      const updatedJob: CalibrationJob = {
+        ...selectedJob,
+        customer_name: editCustomerName,
+        site_name: editSiteName,
+        tool_id: editToolId,
+        tool_type: editToolType,
+        engineer_name: editEngineerName,
+        calibration_date: editCalibrationDate,
+        temperature: editTemperature,
+        humidity: editHumidity,
+        reference_instrument: editReferenceInstrument,
+        adjustment_made: editAdjustmentMade,
+        engineer_notes: editEngineerNotes,
+      };
+
+      setSelectedJob(updatedJob);
+      setIsEditingJobDetails(false);
+      setToolTypeChangeWarning(false);
+      setError("");
+
+      await loadJobs(db);
+    } catch (err) {
+      setError(String(err));
+    }
   }
 
   function editReading(reading: CalibrationReading) {
@@ -465,29 +637,87 @@ function App() {
     }
 
     try {
-      await db.execute(
-        `
-        INSERT INTO reference_instruments (
-          name,
-          certificate_number,
-          calibration_due_date,
-          created_at
-        )
-        VALUES ($1, $2, $3, $4)
-        `,
-        [
+      if (editingInstrumentId) {
+        await updateReferenceInstrument(
+          db,
+          editingInstrumentId,
           instrumentName,
           certificateNumber,
-          calibrationDueDate,
-          new Date().toISOString(),
-        ]
-      );
+          calibrationDueDate
+        );
+      } else {
+        await db.execute(
+          `
+          INSERT INTO reference_instruments (
+            name,
+            certificate_number,
+            calibration_due_date,
+            created_at
+          )
+          VALUES ($1, $2, $3, $4)
+          `,
+          [
+            instrumentName,
+            certificateNumber,
+            calibrationDueDate,
+            new Date().toISOString(),
+          ]
+        );
+      }
 
-      setInstrumentName("");
-      setCertificateNumber("");
-      setCalibrationDueDate("");
+      resetInstrumentForm();
       setError("");
 
+      await loadReferenceInstruments(db);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  function startEditReferenceInstrument(instrument: ReferenceInstrument) {
+    setEditingInstrumentId(instrument.id);
+    setInstrumentName(instrument.name);
+    setCertificateNumber(instrument.certificate_number);
+    setCalibrationDueDate(instrument.calibration_due_date);
+    setError("");
+  }
+
+  function cancelEditReferenceInstrument() {
+    resetInstrumentForm();
+    setError("");
+  }
+
+  async function deleteReferenceInstrumentEntry(
+    instrument: ReferenceInstrument
+  ) {
+    if (!db) return;
+
+    const label = formatInstrumentLabel(instrument);
+    const usageCount = await countJobsUsingInstrumentLabel(db, label);
+
+    if (usageCount > 0) {
+      setError(
+        `Cannot delete "${label}". It is used by ${usageCount} saved job${
+          usageCount === 1 ? "" : "s"
+        }. Remove or change the reference instrument on those jobs first.`
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete reference instrument "${label}"? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await deleteReferenceInstrument(db, instrument.id);
+
+      if (editingInstrumentId === instrument.id) {
+        resetInstrumentForm();
+      }
+
+      setError("");
       await loadReferenceInstruments(db);
     } catch (err) {
       setError(String(err));
@@ -516,17 +746,23 @@ function App() {
       <ReferenceInstrumentsScreen
         error={error}
         referenceInstruments={referenceInstruments}
+        editingInstrumentId={editingInstrumentId}
         instrumentName={instrumentName}
         onInstrumentNameChange={setInstrumentName}
         certificateNumber={certificateNumber}
         onCertificateNumberChange={setCertificateNumber}
         calibrationDueDate={calibrationDueDate}
         onCalibrationDueDateChange={setCalibrationDueDate}
+        getInstrumentJobUsageCount={getInstrumentJobUsageCount}
         onBack={() => {
           setShowReferenceInstruments(false);
+          resetInstrumentForm();
           setError("");
         }}
         onSave={saveReferenceInstrument}
+        onStartEdit={startEditReferenceInstrument}
+        onCancelEdit={cancelEditReferenceInstrument}
+        onDelete={deleteReferenceInstrumentEntry}
       />
     );
   }
@@ -539,17 +775,49 @@ function App() {
         error={error}
         template={selectedJobTemplate}
         isJobLocked={isJobLocked}
+        isEditingJobDetails={isEditingJobDetails}
         requiredPoints={requiredPoints}
         completedRequiredPoints={completedRequiredPoints}
         missingRequiredPoints={missingRequiredPoints}
         allRequiredPointsCompleted={allRequiredPointsCompleted}
         canMarkReadyForReview={canMarkReadyForReview}
+        referenceInstruments={referenceInstruments}
+        editCustomerName={editCustomerName}
+        editSiteName={editSiteName}
+        editToolId={editToolId}
+        editToolType={editToolType}
+        editEngineerName={editEngineerName}
+        editCalibrationDate={editCalibrationDate}
+        editTemperature={editTemperature}
+        editHumidity={editHumidity}
+        editReferenceInstrument={editReferenceInstrument}
+        editAdjustmentMade={editAdjustmentMade}
+        editEngineerNotes={editEngineerNotes}
+        toolTypeChangeWarning={toolTypeChangeWarning}
+        editSelectedInstrumentExpired={editSelectedInstrumentExpired}
         testPoint={testPoint}
         actualReading={actualReading}
         errorValue={errorValue}
         result={result}
         editingReadingId={editingReadingId}
-        onBack={() => setSelectedJob(null)}
+        onBack={() => {
+          setSelectedJob(null);
+          setIsEditingJobDetails(false);
+        }}
+        onStartEditJobDetails={startEditJobDetails}
+        onCancelEditJobDetails={cancelEditJobDetails}
+        onSaveJobDetails={saveJobDetails}
+        onEditCustomerNameChange={setEditCustomerName}
+        onEditSiteNameChange={setEditSiteName}
+        onEditToolIdChange={setEditToolId}
+        onEditToolTypeChange={handleEditToolTypeChange}
+        onEditEngineerNameChange={setEditEngineerName}
+        onEditCalibrationDateChange={setEditCalibrationDate}
+        onEditTemperatureChange={setEditTemperature}
+        onEditHumidityChange={setEditHumidity}
+        onEditReferenceInstrumentChange={setEditReferenceInstrument}
+        onEditAdjustmentMadeChange={setEditAdjustmentMade}
+        onEditEngineerNotesChange={setEditEngineerNotes}
         onTestPointChange={handleTestPointChange}
         onActualReadingChange={handleActualReadingChange}
         onErrorValueChange={setErrorValue}

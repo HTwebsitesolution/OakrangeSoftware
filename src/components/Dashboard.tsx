@@ -247,10 +247,10 @@ export default function Dashboard({
             </label>
 
             {selectedInstrumentExpired && (
-              <p className="instrument-warning full-width-field">
-                Warning: The selected reference instrument has an expired
-                calibration due date. You can still save this job, but review
-                the instrument before use.
+              <p className="instrument-warning-strong full-width-field">
+                Expired reference instrument selected. This instrument should be
+                replaced or re-calibrated before use. You will be asked to
+                confirm before saving this job.
               </p>
             )}
 

@@ -667,6 +667,17 @@ button:disabled {
   align-items: center;
 }
 
+.instruments-header-with-actions,
+.instruments-row-with-actions,
+.instruments-row-editing {
+  grid-template-columns: 1.2fr 1fr 1fr 0.8fr 1.1fr;
+}
+
+.instruments-row-editing {
+  border-color: #12355b;
+  background: #eef4fa;
+}
+
 .instruments-header {
   padding: 12px 14px;
   border-radius: 12px;
@@ -708,6 +719,31 @@ button:disabled {
   text-align: left;
 }
 
+.instrument-warning-strong {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #7f1d1d;
+  border: 2px solid #991b1b;
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 700;
+  text-align: left;
+}
+
+.instrument-usage-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: #5a6b80;
+  font-weight: 600;
+}
+
+.job-details-edit-form {
+  margin-top: 20px;
+}
+
 .empty-state {
   color: #5a6b80;
   margin: 0;
@@ -728,7 +764,9 @@ button:disabled {
     display: none;
   }
 
-  .instruments-row {
+  .instruments-row,
+  .instruments-row-with-actions,
+  .instruments-row-editing {
     grid-template-columns: 1fr;
     gap: 6px;
   }

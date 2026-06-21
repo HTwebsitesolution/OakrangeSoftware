@@ -1,4 +1,5 @@
 import type { FormEvent } from "react";
+import { CALIBRATION_TEMPLATES } from "../calibrationTemplates";
 import {
   findTestPointForLabel,
   formatNominalDisplay,
@@ -7,12 +8,17 @@ import {
   hasRequiredTestPoints,
   showsPrototypeRulesNotice,
 } from "../calibrationTemplates";
+import {
+  formatInstrumentLabel,
+  getInstrumentValidity,
+} from "../referenceInstruments";
 import { displayValue, formatRulesSourceLabel, getResultClass } from "../utils";
 import type {
   CalibrationJob,
   CalibrationReading,
   CalibrationTemplate,
   CalibrationTestPoint,
+  ReferenceInstrument,
 } from "../types";
 
 type JobDetailProps = {
@@ -21,17 +27,46 @@ type JobDetailProps = {
   error: string;
   template: CalibrationTemplate | undefined;
   isJobLocked: boolean;
+  isEditingJobDetails: boolean;
   requiredPoints: CalibrationTestPoint[];
   completedRequiredPoints: CalibrationTestPoint[];
   missingRequiredPoints: CalibrationTestPoint[];
   allRequiredPointsCompleted: boolean;
   canMarkReadyForReview: boolean;
+  referenceInstruments: ReferenceInstrument[];
+  editCustomerName: string;
+  editSiteName: string;
+  editToolId: string;
+  editToolType: string;
+  editEngineerName: string;
+  editCalibrationDate: string;
+  editTemperature: string;
+  editHumidity: string;
+  editReferenceInstrument: string;
+  editAdjustmentMade: string;
+  editEngineerNotes: string;
+  toolTypeChangeWarning: boolean;
+  editSelectedInstrumentExpired: boolean;
   testPoint: string;
   actualReading: string;
   errorValue: string;
   result: string;
   editingReadingId: number | null;
   onBack: () => void;
+  onStartEditJobDetails: () => void;
+  onCancelEditJobDetails: () => void;
+  onSaveJobDetails: (event: FormEvent<HTMLFormElement>) => void;
+  onEditCustomerNameChange: (value: string) => void;
+  onEditSiteNameChange: (value: string) => void;
+  onEditToolIdChange: (value: string) => void;
+  onEditToolTypeChange: (value: string) => void;
+  onEditEngineerNameChange: (value: string) => void;
+  onEditCalibrationDateChange: (value: string) => void;
+  onEditTemperatureChange: (value: string) => void;
+  onEditHumidityChange: (value: string) => void;
+  onEditReferenceInstrumentChange: (value: string) => void;
+  onEditAdjustmentMadeChange: (value: string) => void;
+  onEditEngineerNotesChange: (value: string) => void;
   onTestPointChange: (value: string) => void;
   onActualReadingChange: (value: string) => void;
   onErrorValueChange: (value: string) => void;
@@ -51,17 +86,46 @@ export default function JobDetail({
   error,
   template,
   isJobLocked,
+  isEditingJobDetails,
   requiredPoints,
   completedRequiredPoints,
   missingRequiredPoints,
   allRequiredPointsCompleted,
   canMarkReadyForReview,
+  referenceInstruments,
+  editCustomerName,
+  editSiteName,
+  editToolId,
+  editToolType,
+  editEngineerName,
+  editCalibrationDate,
+  editTemperature,
+  editHumidity,
+  editReferenceInstrument,
+  editAdjustmentMade,
+  editEngineerNotes,
+  toolTypeChangeWarning,
+  editSelectedInstrumentExpired,
   testPoint,
   actualReading,
   errorValue,
   result,
   editingReadingId,
   onBack,
+  onStartEditJobDetails,
+  onCancelEditJobDetails,
+  onSaveJobDetails,
+  onEditCustomerNameChange,
+  onEditSiteNameChange,
+  onEditToolIdChange,
+  onEditToolTypeChange,
+  onEditEngineerNameChange,
+  onEditCalibrationDateChange,
+  onEditTemperatureChange,
+  onEditHumidityChange,
+  onEditReferenceInstrumentChange,
+  onEditAdjustmentMadeChange,
+  onEditEngineerNotesChange,
   onTestPointChange,
   onActualReadingChange,
   onErrorValueChange,
@@ -85,84 +149,253 @@ export default function JobDetail({
           <button type="button" onClick={onBack}>
             Back to Dashboard
           </button>
+
+          {!isJobLocked && !isEditingJobDetails && (
+            <button type="button" onClick={onStartEditJobDetails}>
+              Edit Job Details
+            </button>
+          )}
         </div>
-
-        <div className="detail-grid">
-          <div>
-            <span>Customer</span>
-            <strong>{job.customer_name}</strong>
-          </div>
-
-          <div>
-            <span>Site</span>
-            <strong>{job.site_name}</strong>
-          </div>
-
-          <div>
-            <span>Tool ID</span>
-            <strong>{job.tool_id}</strong>
-          </div>
-
-          <div>
-            <span>Tool Type</span>
-            <strong>{job.tool_type}</strong>
-          </div>
-
-          <div>
-            <span>Engineer</span>
-            <strong>{job.engineer_name}</strong>
-          </div>
-
-          <div>
-            <span>Status</span>
-            <strong>{job.status}</strong>
-          </div>
-
-          <div>
-            <span>Calibration Date</span>
-            <strong>{displayValue(job.calibration_date)}</strong>
-          </div>
-
-          <div>
-            <span>Reference Instrument</span>
-            <strong>{displayValue(job.reference_instrument)}</strong>
-          </div>
-
-          <div>
-            <span>Temperature</span>
-            <strong>{displayValue(job.temperature)}</strong>
-          </div>
-
-          <div>
-            <span>Humidity</span>
-            <strong>{displayValue(job.humidity)}</strong>
-          </div>
-        </div>
-
-        <section className="metadata-panel">
-          <h2>Environmental / Engineer Notes</h2>
-
-          <div className="metadata-grid">
-            <div>
-              <span>Adjustment Made</span>
-              <strong>{displayValue(job.adjustment_made)}</strong>
-            </div>
-
-            <div>
-              <span>Engineer Notes</span>
-              <strong>{displayValue(job.engineer_notes)}</strong>
-            </div>
-          </div>
-        </section>
 
         {isJobLocked && (
           <section className="locked-panel">
             <strong>This job is locked for review.</strong>
             <span>
-              Readings cannot be edited or deleted while the job is Ready for
-              Review. Return it to Draft if corrections are needed.
+              Job details, readings and metadata cannot be edited while the job
+              is Ready for Review. Return it to Draft if corrections are needed.
             </span>
           </section>
+        )}
+
+        {isEditingJobDetails ? (
+          <form className="job-form job-details-edit-form" onSubmit={onSaveJobDetails}>
+            <h2>Edit Job Details</h2>
+
+            <label>
+              Customer Name
+              <input
+                value={editCustomerName}
+                onChange={(event) =>
+                  onEditCustomerNameChange(event.target.value)
+                }
+                placeholder="e.g. Oakrange Customer"
+              />
+            </label>
+
+            <label>
+              Site Name
+              <input
+                value={editSiteName}
+                onChange={(event) => onEditSiteNameChange(event.target.value)}
+                placeholder="e.g. Main Workshop"
+              />
+            </label>
+
+            <label>
+              Tool ID
+              <input
+                value={editToolId}
+                onChange={(event) => onEditToolIdChange(event.target.value)}
+                placeholder="e.g. TW-001"
+              />
+            </label>
+
+            <label>
+              Tool Type
+              <select
+                value={editToolType}
+                onChange={(event) => onEditToolTypeChange(event.target.value)}
+              >
+                <option value="">Select a tool type...</option>
+                {CALIBRATION_TEMPLATES.map((item) => (
+                  <option key={item.toolType} value={item.toolType}>
+                    {item.toolType}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {toolTypeChangeWarning && (
+              <p className="instrument-warning full-width-field">
+                Warning: This job already has calibration readings. Changing the
+                tool type may affect required test points and completion checks.
+                Existing readings will not be deleted.
+              </p>
+            )}
+
+            <label>
+              Engineer Name
+              <input
+                value={editEngineerName}
+                onChange={(event) =>
+                  onEditEngineerNameChange(event.target.value)
+                }
+                placeholder="e.g. Luke"
+              />
+            </label>
+
+            <label>
+              Calibration Date
+              <input
+                type="date"
+                value={editCalibrationDate}
+                onChange={(event) =>
+                  onEditCalibrationDateChange(event.target.value)
+                }
+              />
+            </label>
+
+            <label>
+              Temperature
+              <input
+                value={editTemperature}
+                onChange={(event) => onEditTemperatureChange(event.target.value)}
+                placeholder="e.g. 20 °C"
+              />
+            </label>
+
+            <label>
+              Humidity
+              <input
+                value={editHumidity}
+                onChange={(event) => onEditHumidityChange(event.target.value)}
+                placeholder="e.g. 45%"
+              />
+            </label>
+
+            <label>
+              Reference Instrument
+              <select
+                value={editReferenceInstrument}
+                onChange={(event) =>
+                  onEditReferenceInstrumentChange(event.target.value)
+                }
+              >
+                <option value="">Select reference instrument...</option>
+                {referenceInstruments.map((instrument) => {
+                  const label = formatInstrumentLabel(instrument);
+                  const validity = getInstrumentValidity(
+                    instrument.calibration_due_date
+                  );
+
+                  return (
+                    <option key={instrument.id} value={label}>
+                      {label} ({validity})
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+
+            {editSelectedInstrumentExpired && (
+              <p className="instrument-warning-strong full-width-field">
+                Expired reference instrument selected. This instrument should be
+                replaced or re-calibrated before use. You will be asked to
+                confirm before saving.
+              </p>
+            )}
+
+            <label className="full-width-field">
+              Adjustment Made
+              <textarea
+                value={editAdjustmentMade}
+                onChange={(event) =>
+                  onEditAdjustmentMadeChange(event.target.value)
+                }
+                placeholder="e.g. No adjustment made / Adjusted before final readings"
+              />
+            </label>
+
+            <label className="full-width-field">
+              Engineer Notes
+              <textarea
+                value={editEngineerNotes}
+                onChange={(event) => onEditEngineerNotesChange(event.target.value)}
+                placeholder="Any notes about condition, access, environment, or engineer observations"
+              />
+            </label>
+
+            <div className="form-action-row">
+              <button type="submit">Save Job Details</button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={onCancelEditJobDetails}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <div className="detail-grid">
+              <div>
+                <span>Customer</span>
+                <strong>{job.customer_name}</strong>
+              </div>
+
+              <div>
+                <span>Site</span>
+                <strong>{job.site_name}</strong>
+              </div>
+
+              <div>
+                <span>Tool ID</span>
+                <strong>{job.tool_id}</strong>
+              </div>
+
+              <div>
+                <span>Tool Type</span>
+                <strong>{job.tool_type}</strong>
+              </div>
+
+              <div>
+                <span>Engineer</span>
+                <strong>{job.engineer_name}</strong>
+              </div>
+
+              <div>
+                <span>Status</span>
+                <strong>{job.status}</strong>
+              </div>
+
+              <div>
+                <span>Calibration Date</span>
+                <strong>{displayValue(job.calibration_date)}</strong>
+              </div>
+
+              <div>
+                <span>Reference Instrument</span>
+                <strong>{displayValue(job.reference_instrument)}</strong>
+              </div>
+
+              <div>
+                <span>Temperature</span>
+                <strong>{displayValue(job.temperature)}</strong>
+              </div>
+
+              <div>
+                <span>Humidity</span>
+                <strong>{displayValue(job.humidity)}</strong>
+              </div>
+            </div>
+
+            <section className="metadata-panel">
+              <h2>Environmental / Engineer Notes</h2>
+
+              <div className="metadata-grid">
+                <div>
+                  <span>Adjustment Made</span>
+                  <strong>{displayValue(job.adjustment_made)}</strong>
+                </div>
+
+                <div>
+                  <span>Engineer Notes</span>
+                  <strong>{displayValue(job.engineer_notes)}</strong>
+                </div>
+              </div>
+            </section>
+          </>
         )}
 
         {template && (
