@@ -414,6 +414,23 @@ body,
   font-weight: 700;
 }
 
+.prototype-rules-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  text-align: left;
+}
+
+.template-preview .prototype-rules-notice {
+  margin-top: 4px;
+}
+
 .chip-button:disabled {
   cursor: not-allowed;
   opacity: 0.75;

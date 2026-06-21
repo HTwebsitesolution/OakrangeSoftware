@@ -5,8 +5,8 @@ import JobDetail from "./components/JobDetail";
 import ReferenceInstrumentsScreen from "./components/ReferenceInstruments";
 import {
   calculateErrorAndResult,
-  getReadingForPoint,
   getTemplate,
+  getTemplateCompletionState,
   normaliseText,
 } from "./calibrationTemplates";
 import {
@@ -70,21 +70,13 @@ function App() {
 
   const isJobLocked = selectedJob?.status === "Ready for Review";
 
-  const requiredPoints = selectedJobTemplate?.testPoints ?? [];
-  const completedRequiredPoints = requiredPoints.filter((point) =>
-    getReadingForPoint(readings, point.label)
-  );
-  const missingRequiredPoints = requiredPoints.filter(
-    (point) => !getReadingForPoint(readings, point.label)
-  );
-
-  const hasRequiredPoints = requiredPoints.length > 0;
-  const allRequiredPointsCompleted = hasRequiredPoints
-    ? completedRequiredPoints.length === requiredPoints.length
-    : readings.length > 0;
-
-  const canMarkReadyForReview =
-    allRequiredPointsCompleted && readings.length > 0;
+  const {
+    requiredPoints,
+    completedRequiredPoints,
+    missingRequiredPoints,
+    allRequiredPointsCompleted,
+    canMarkReadyForReview,
+  } = getTemplateCompletionState(selectedJobTemplate, readings);
 
   const selectedReferenceInstrument = referenceInstruments.find(
     (instrument) =>

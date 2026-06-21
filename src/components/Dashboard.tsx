@@ -1,9 +1,15 @@
 import type { FormEvent } from "react";
-import { CALIBRATION_TEMPLATES } from "../calibrationTemplates";
+import {
+  CALIBRATION_TEMPLATES,
+  formatTestPointSummary,
+  hasRequiredTestPoints,
+  showsPrototypeRulesNotice,
+} from "../calibrationTemplates";
 import {
   formatInstrumentLabel,
   getInstrumentValidity,
 } from "../referenceInstruments";
+import { formatRulesSourceLabel } from "../utils";
 import type { CalibrationJob, CalibrationTemplate, ReferenceInstrument } from "../types";
 
 type DashboardProps = {
@@ -150,21 +156,30 @@ export default function Dashboard({
               <div className="template-preview">
                 <strong>{selectedTemplate.toolType}</strong>
                 <span>Unit: {selectedTemplate.unit}</span>
+                <span>
+                  Rules: {formatRulesSourceLabel(selectedTemplate.rulesSource)}
+                </span>
 
-                {selectedTemplate.testPoints.length > 0 ? (
+                {hasRequiredTestPoints(selectedTemplate) ? (
                   <span>
-                    Prototype points:{" "}
+                    Required test points:{" "}
                     {selectedTemplate.testPoints
-                      .map(
-                        (point) =>
-                          `${point.label} (±${point.tolerance.toFixed(2)} ${
-                            point.unit
-                          })`
-                      )
-                      .join(", ")}
+                      .filter((point) => point.required !== false)
+                      .map((point) => formatTestPointSummary(point))
+                      .join("; ")}
                   </span>
                 ) : (
-                  <span>No suggested test points added yet.</span>
+                  <span>
+                    No required test points — manual readings can be entered on
+                    the job.
+                  </span>
+                )}
+
+                {showsPrototypeRulesNotice(selectedTemplate) && (
+                  <p className="prototype-rules-notice">
+                    Prototype / demo template values only. Replace with official
+                    Oakrange calibration rules when supplied.
+                  </p>
                 )}
               </div>
             )}

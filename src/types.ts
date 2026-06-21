@@ -27,16 +27,24 @@ export type CalibrationReading = {
   created_at: string;
 };
 
+export type CalibrationRulesSource = "prototype" | "official";
+
 export type CalibrationTestPoint = {
   label: string;
   nominalValue: number;
   unit: string;
   tolerance: number;
+  /** When false, point is suggested but not required for Ready for Review. Defaults to true. */
+  required?: boolean;
 };
 
 export type CalibrationTemplate = {
+  /** Stable identifier for future template register / sync. */
+  id: string;
   toolType: string;
   unit: string;
+  rulesSource: CalibrationRulesSource;
+  description?: string;
   testPoints: CalibrationTestPoint[];
 };
 

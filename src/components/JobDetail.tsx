@@ -1,9 +1,13 @@
 import type { FormEvent } from "react";
 import {
+  findTestPointForLabel,
+  formatNominalDisplay,
+  formatToleranceDisplay,
   getReadingForPoint,
-  normaliseText,
+  hasRequiredTestPoints,
+  showsPrototypeRulesNotice,
 } from "../calibrationTemplates";
-import { displayValue, getResultClass } from "../utils";
+import { displayValue, formatRulesSourceLabel, getResultClass } from "../utils";
 import type {
   CalibrationJob,
   CalibrationReading,
@@ -167,24 +171,33 @@ export default function JobDetail({
 
             <p>
               <strong>{template.toolType}</strong> template selected. Unit:{" "}
-              <strong>{template.unit}</strong>
+              <strong>{template.unit}</strong>. Rules:{" "}
+              <strong>{formatRulesSourceLabel(template.rulesSource)}</strong>
             </p>
 
-            {template.testPoints.length > 0 ? (
+            {showsPrototypeRulesNotice(template) && (
+              <p className="prototype-rules-notice">
+                Prototype / demo template values only. These nominal values and
+                tolerances are for development and testing — not official
+                Oakrange calibration rules.
+              </p>
+            )}
+
+            {hasRequiredTestPoints(template) ? (
               <>
                 <div className="completion-panel">
                   <strong>
-                    Required points completed: {completedRequiredPoints.length}{" "}
-                    / {requiredPoints.length}
+                    Required test point progress:{" "}
+                    {completedRequiredPoints.length} / {requiredPoints.length}
                   </strong>
 
                   {allRequiredPointsCompleted ? (
                     <span className="completion-good">
-                      All required points are complete.
+                      All required test points are complete.
                     </span>
                   ) : (
                     <span className="completion-warning">
-                      Missing:{" "}
+                      Missing required points:{" "}
                       {missingRequiredPoints
                         .map((point) => point.label)
                         .join(", ")}
@@ -193,8 +206,11 @@ export default function JobDetail({
                 </div>
 
                 <p className="helper-text">
-                  Suggested test points with prototype tolerances. Completed
-                  points are locked to prevent duplicate readings.
+                  Select a required test point to pre-fill the reading form.
+                  Each point shows expected/nominal value, tolerance, and unit.
+                  Completed points are locked to prevent duplicate readings.
+                  Manual readings can still be entered for points not listed
+                  below.
                 </p>
 
                 <div className="suggested-point-buttons">
@@ -203,6 +219,7 @@ export default function JobDetail({
                       readings,
                       point.label
                     );
+                    const isRequired = point.required !== false;
 
                     return (
                       <button
@@ -216,10 +233,13 @@ export default function JobDetail({
                         onClick={() => onApplyTestPoint(point)}
                         disabled={Boolean(existingReading) || isJobLocked}
                       >
-                        <span>{point.label}</span>
+                        <span>
+                          {point.label}
+                          {!isRequired ? " (optional)" : ""}
+                        </span>
                         <small>
-                          Nominal {point.nominalValue} {point.unit} | ±
-                          {point.tolerance.toFixed(2)} {point.unit}
+                          Expected/Nominal {formatNominalDisplay(point)} |
+                          Tolerance {formatToleranceDisplay(point)}
                         </small>
                         {existingReading && <small>Completed</small>}
                       </button>
@@ -229,7 +249,8 @@ export default function JobDetail({
               </>
             ) : (
               <p className="helper-text">
-                No required test points have been added for this tool type yet.
+                No required test points for this tool type. Enter manual
+                readings below — error and result must be set by the engineer.
               </p>
             )}
           </section>
@@ -288,9 +309,10 @@ export default function JobDetail({
           </label>
 
           <p className="calculation-note">
-            For Torque Wrench prototype rules, the app calculates Error as:
-            Actual Reading minus Nominal Test Point. It then sets Pass or Fail
-            using the prototype tolerance.
+            When a test point matches a template rule, the app calculates Error
+            as Actual Reading minus Expected/Nominal value, then sets Pass or
+            Fail using the template tolerance. Manual readings without a
+            matching rule must have error and result entered by the engineer.
           </p>
 
           <div className="form-action-row">
@@ -320,7 +342,7 @@ export default function JobDetail({
             <div className="readings-table">
               <div className="readings-header readings-header-with-actions">
                 <span>Test Point</span>
-                <span>Nominal</span>
+                <span>Expected/Nominal</span>
                 <span>Tolerance</span>
                 <span>Actual</span>
                 <span>Error</span>
@@ -329,10 +351,9 @@ export default function JobDetail({
               </div>
 
               {readings.map((reading) => {
-                const templatePoint = template?.testPoints.find(
-                  (point) =>
-                    normaliseText(point.label) ===
-                    normaliseText(reading.test_point)
+                const templatePoint = findTestPointForLabel(
+                  template,
+                  reading.test_point
                 );
 
                 return (
@@ -343,14 +364,12 @@ export default function JobDetail({
                     <span>{reading.test_point}</span>
                     <span>
                       {templatePoint
-                        ? `${templatePoint.nominalValue} ${templatePoint.unit}`
+                        ? formatNominalDisplay(templatePoint)
                         : "Manual"}
                     </span>
                     <span>
                       {templatePoint
-                        ? `±${templatePoint.tolerance.toFixed(2)} ${
-                            templatePoint.unit
-                          }`
+                        ? formatToleranceDisplay(templatePoint)
                         : "Manual"}
                     </span>
                     <span>{reading.actual_reading}</span>
